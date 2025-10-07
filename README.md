@@ -112,6 +112,180 @@ sudo systemctl enable --now lactd
 
 You can now use the GUI to change settings and view information.
 
+## Running LACT via CLI on Ubuntu
+
+For headless setups or users who prefer command-line management, LACT can be fully controlled via CLI on Ubuntu.
+
+### Installation on Ubuntu
+
+1. Download the latest `.deb` package from the [releases page](https://github.com/ilya-zlobintsev/LACT/releases):
+   ```bash
+   wget https://github.com/ilya-zlobintsev/LACT/releases/download/VERSION/lact_VERSION_amd64.deb
+   ```
+   Replace `VERSION` with the actual version number.
+
+2. Install the package:
+   ```bash
+   sudo dpkg -i lact_VERSION_amd64.deb
+   ```
+
+3. Install any missing dependencies (if needed):
+   ```bash
+   sudo apt-get install -f
+   ```
+
+4. For Nvidia GPU support, ensure you have the Nvidia proprietary driver with CUDA libraries installed:
+   ```bash
+   sudo apt install nvidia-driver-XXX nvidia-cuda-toolkit
+   ```
+   Replace `XXX` with your appropriate driver version (e.g., 550, 560).
+
+### Daemon Setup
+
+1. Enable and start the LACT daemon:
+   ```bash
+   sudo systemctl enable --now lactd
+   ```
+
+2. Verify the daemon is running:
+   ```bash
+   sudo systemctl status lactd
+   ```
+
+3. Check daemon logs if needed:
+   ```bash
+   sudo journalctl -u lactd -f
+   ```
+
+### Configuration Management
+
+1. **Find your GPU ID:**
+   ```bash
+   lact cli list-gpus
+   ```
+   Example output:
+   ```
+   10DE:XXXX-YYYY:ZZZZ-0000:09:00.0 (NVIDIA RTX PRO 6000)
+   ```
+
+2. **View current GPU information:**
+   ```bash
+   lact cli info
+   ```
+
+3. **Edit configuration file:**
+   
+   The main config file is located at `/etc/lact/config.yaml`. You can edit it directly:
+   ```bash
+   sudo nano /etc/lact/config.yaml
+   ```
+   
+   Or copy a pre-made configuration (e.g., for RTX PRO 6000):
+   ```bash
+   sudo cp /path/to/RTXPro6000Blackwell.yaml /etc/lact/config.yaml
+   ```
+   
+   **Important:** Replace `REPLACE_WITH_YOUR_GPU_ID` in the config file with your actual GPU ID from step 1.
+
+4. **Apply configuration changes:**
+   
+   After editing the config file, restart the daemon to apply changes:
+   ```bash
+   sudo systemctl restart lactd
+   ```
+   
+   LACT also watches for config file changes and reloads automatically, but daemon settings require a restart.
+
+5. **Confirm settings** (within 5 seconds of applying new settings to prevent auto-revert):
+   
+   After the daemon applies new settings, confirm them via the API or they will revert:
+   ```bash
+   echo '{"command": "confirm_pending_config", "args": {"command": "confirm"}}' | nc -U /run/lactd.sock
+   ```
+
+### Profile Management
+
+LACT supports multiple profiles for different workloads (e.g., Performance, Efficiency, Gaming):
+
+1. **List available profiles:**
+   ```bash
+   lact cli profile list
+   ```
+
+2. **Get current profile:**
+   ```bash
+   lact cli profile get
+   ```
+
+3. **Switch to a different profile:**
+   ```bash
+   lact cli profile set "Performance"
+   ```
+
+4. **Enable/disable automatic profile switching:**
+   ```bash
+   lact cli profile auto-switch enable
+   lact cli profile auto-switch disable
+   ```
+
+### Monitoring and Validation
+
+1. **Check GPU stats in real-time:**
+   ```bash
+   watch -n 1 'lact cli info'
+   ```
+
+2. **Monitor power consumption and clocks:**
+   
+   Use `nvidia-smi` for Nvidia GPUs:
+   ```bash
+   watch -n 1 nvidia-smi
+   ```
+
+3. **Test stability after overclocking/undervolting:**
+   ```bash
+   # GPU stress test
+   sudo apt install mesa-utils
+   glxgears  # Basic OpenGL test
+   
+   # For CUDA workloads
+   # Use your preferred benchmark or workload
+   ```
+
+### Troubleshooting
+
+1. **Daemon not starting:**
+   ```bash
+   sudo journalctl -u lactd --no-pager | tail -50
+   ```
+
+2. **Permission issues:**
+   
+   Ensure your user is in the correct group (sudo or wheel):
+   ```bash
+   groups $USER
+   ```
+   
+   If needed, edit `/etc/lact/config.yaml` and set:
+   ```yaml
+   daemon:
+     admin_user: your_username
+   ```
+   Then restart: `sudo systemctl restart lactd`
+
+3. **Settings not applying:**
+   - Check that the GPU ID in config matches output from `lact cli list-gpus`
+   - Verify daemon is running: `sudo systemctl status lactd`
+   - Check for errors in daemon logs: `sudo journalctl -u lactd -f`
+
+4. **GPU crashes or artifacts:**
+   - Reduce overclock values in config file
+   - Increase power limit if undervolting
+   - Reboot system to reset GPU to default state
+   - Settings automatically revert after 5 seconds if system becomes unstable
+
+See the [Config file reference](./docs/CONFIG.md) and [API documentation](./docs/API.md) for advanced usage.
+
 # Hardware support
 
 See the
