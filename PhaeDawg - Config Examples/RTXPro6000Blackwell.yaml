@@ -1,129 +1,15 @@
-# LACT Configuration for Nvidia RTX PRO 6000 Blackwell Workstation Card
-# 
-# IMPORTANT: These are CONSERVATIVE starting values for undervolting and overclocking.
-# Always test stability after applying settings and adjust incrementally.
-# 
-# RTX PRO 6000 Blackwell Specifications (TechPowerUp - VERIFIED):
-# - CUDA Cores: ~24,064
-# - Memory: 96GB GDDR7  
-# - Base Clock: 1590 MHz
-# - Boost Clock: 2617 MHz
-# - Memory Clock: 1750 MHz (28 Gbps effective bandwidth)
-# - TDP: 600W
-#
-# Nvidia GPU Configuration in LACT:
-# - NO direct voltage control (min_voltage/max_voltage/voltage_offset don't work on Nvidia!)
-# - Undervolting is achieved INDIRECTLY through reduced power_cap
-# - Can use EITHER locked clocks OR clock offsets (not both simultaneously)
-# - Min and max clocks must be set together for locked clocks
-
+version: 5
 daemon:
-  # Logging level - use 'debug' for troubleshooting, 'info' for normal operation
   log_level: info
-  # Admin group - users in this group can control LACT (wheel or sudo typically)
   admin_group: sudo
-  # Disable NVAPI if you encounter issues (optional)
-  # disable_nvapi: false
-
-# ============================================================================
-# DUAL GPU CONFIGURATION
-# ============================================================================
-# Both RTX PRO 6000 Blackwell GPUs will use the same settings
-# GPU 1: 10DE:2BB1-10DE:204B-0000:49:00.0
-# GPU 2: 10DE:2BB1-10DE:204B-0000:c5:00.0
+  disable_clocks_cleanup: false
+apply_settings_timer: 5
 gpus:
-  # GPU 1 - First RTX PRO 6000 Blackwell
-  10DE:2BB1-10DE:204B-0000:49:00.0:
-    
-    # Fan Control Configuration
-    # Enable custom fan curve for better cooling during overclocking
-    fan_control_enabled: true
-    fan_control_settings:
-      # Use 'curve' mode for automatic fan adjustment based on temperature
-      mode: curve
-      # Temperature sensor to use (edge is the main GPU temp)
-      temperature_key: edge
-      # Check temperature every 500ms
-      interval_ms: 500
-      # Custom fan curve: Temperature (°C) : Fan Speed (0.0 to 1.0)
-      # Conservative curve optimized for workstation use
-      curve:
-        40: 0.30   # 30% fan speed at 40°C
-        50: 0.40   # 40% fan speed at 50°C
-        60: 0.55   # 55% fan speed at 60°C
-        70: 0.70   # 70% fan speed at 70°C
-        80: 0.90   # 90% fan speed at 80°C
-      # Spindown delay: wait 3 seconds before reducing fan speed (reduces fan ramping)
-      spindown_delay_ms: 3000
-      # Change threshold: minimum temperature change to trigger fan speed adjustment
-      change_threshold: 2
-      # Auto threshold: temperature below which fan returns to auto mode (Nvidia feature)
-      # Set to 0 to disable, or set to ~35-40 for zero RPM mode when idle
-      auto_threshold: 40
-    
-    # ============================================================================
-    # POWER MANAGEMENT - PRIMARY METHOD FOR UNDERVOLTING ON NVIDIA
-    # ============================================================================
-    # Power cap limits maximum power consumption, forcing GPU to use lower voltages
-    # RTX PRO 6000 Blackwell TDP: 600W
-    # Conservative undervolt: Reduce by 10-15% (510-540W)
-    # Moderate undervolt: Reduce by 15-20% (480-510W) 
-    # Aggressive undervolt: Reduce by 20-30% (420-480W)
-    power_cap: 450   # 25% reduction (aggressive undervolt)
-    
-    # ============================================================================
-    # OPTION 1: LOCKED CLOCKS (Min/Max Together) - For Precise Control
-    # ============================================================================
-    # Locked clocks fix the GPU to operate within a specific frequency range
-    # This is useful for undervolting + maintaining performance
-    # MUST SET BOTH min and max together, or leave both unset
-    #
-    # Conservative locked core clocks (reduce max boost by ~5-8%):
-    min_core_clock: 1800   # Minimum core clock in MHz
-    max_core_clock: 2400   # Maximum core clock in MHz (vs 2617 MHz stock boost)
-    
-    # Conservative locked memory clocks (slightly below stock):
-    # NOTE: Memory CLOCK is 1750 MHz, NOT the 28 Gbps effective bandwidth!
-    min_memory_clock: 1600   # Minimum memory clock in MHz  
-    max_memory_clock: 1700   # Maximum memory clock in MHz (stock 1750 MHz)
-    
-    # ============================================================================
-    # OPTION 2: CLOCK OFFSETS (Alternative to Locked Clocks)
-    # ============================================================================
-    # Clock offsets adjust frequency per performance state
-    # Comment out locked clocks above if using this method instead
-    # Pstate 0 is the highest performance state
-    #
-    # UNCOMMENT THESE IF NOT USING LOCKED CLOCKS:
-    # gpu_clock_offsets:
-    #   0: 100    # +100 MHz overclock on P0 (highest performance)
-    #   1: 75     # +75 MHz on P1
-    #   2: 50     # +50 MHz on P2
-    # 
-    # mem_clock_offsets:
-    #   0: 100    # +100 MHz on memory clock (from 1750 to 1850 MHz)
-    #   1: 75     # +75 MHz on P1
-    
-    # ============================================================================
-    # NOTE ON VOLTAGE CONTROL:
-    # ============================================================================
-    # The following fields do NOT work on Nvidia GPUs in LACT (AMD only):
-    # - min_voltage
-    # - max_voltage  
-    # - voltage_offset
-    #
-    # For Nvidia undervolting, use ONLY:
-    # 1. Reduced power_cap (primary method)
-    # 2. Locked clocks with slightly reduced max frequencies
-    # 3. Or use MSI Afterburner/nvidia-smi if you need voltage curve editing
-  
-  # GPU 2 - Second RTX PRO 6000 Blackwell (IDENTICAL SETTINGS)
-  10DE:2BB1-10DE:204B-0000:c5:00.0:
-    
-    # Fan Control Configuration (same as GPU 1)
+  '10DE:2BB1-10DE:204B-0000:c1:00.0':
     fan_control_enabled: true
     fan_control_settings:
       mode: curve
+      static_speed: 0.5
       temperature_key: edge
       interval_ms: 500
       curve:
@@ -135,294 +21,35 @@ gpus:
       spindown_delay_ms: 3000
       change_threshold: 2
       auto_threshold: 40
-    
-    # Power Management (same as GPU 1)
-    power_cap: 450   # 25% reduction (aggressive undervolt)
-    
-    # Locked Clocks (same as GPU 1)
-    min_core_clock: 1800
-    max_core_clock: 2400
-    min_memory_clock: 1600
-    max_memory_clock: 1700
-
-# Apply settings with confirmation timer
-# Settings will revert after 5 seconds if not confirmed (safety feature)
-apply_settings_timer: 5
-
-# ============================================================================
-# PROFILE CONFIGURATION (Optional)
-# ============================================================================
-# You can create multiple profiles for different workloads
-# Switch profiles using: lact cli profile set "ProfileName"
-profiles:
-  
-  # Performance Profile - Maximum performance with overclocking (applies to BOTH GPUs)
-  Performance:
-    gpus:
-      10DE:2BB1-10DE:204B-0000:49:00.0:
-        # Higher power limit for maximum performance
-        power_cap: 600.0   # Full TDP
-        
-        # Using clock offsets for performance (comment out if using locked clocks in default)
-        gpu_clock_offsets:
-          0: 150    # +150 MHz overclock on P0 (2617 + 150 = ~2767 MHz)
-          1: 100    # +100 MHz on P1
-        mem_clock_offsets:
-          0: 150    # +150 MHz on memory (1750 + 150 = 1900 MHz)
-          1: 100    # +100 MHz on P1
-        
-        # Aggressive fan curve for cooling
-        fan_control_enabled: true
-        fan_control_settings:
-          mode: curve
-          temperature_key: edge
-          interval_ms: 500
-          curve:
-            40: 0.40
-            50: 0.50
-            60: 0.65
-            70: 0.85
-            80: 1.0
-          spindown_delay_ms: 2000
-          change_threshold: 2
-          auto_threshold: 0  # Always manual control
-      
-      # GPU 2 Performance settings (identical to GPU 1)
-      10DE:2BB1-10DE:204B-0000:c5:00.0:
-        power_cap: 600.0
-        gpu_clock_offsets:
-          0: 150
-          1: 100
-        mem_clock_offsets:
-          0: 150
-          1: 100
-        fan_control_enabled: true
-        fan_control_settings:
-          mode: curve
-          temperature_key: edge
-          interval_ms: 500
-          curve:
-            40: 0.40
-            50: 0.50
-            60: 0.65
-            70: 0.85
-            80: 1.0
-          spindown_delay_ms: 2000
-          change_threshold: 2
-          auto_threshold: 0
-  
-  # Balanced Profile - Good performance with moderate power (applies to BOTH GPUs)
-  Balanced:
-    gpus:
-      10DE:2BB1-10DE:204B-0000:49:00.0:
-        # Moderate power limit
-        power_cap: 500.0   # ~17% reduction
-        
-        # Locked clocks for balanced performance
-        min_core_clock: 1700
-        max_core_clock: 2500   # Slightly below stock 2617 boost
-        min_memory_clock: 1650
-        max_memory_clock: 1750  # At stock memory speed
-        
-        # Balanced fan curve
-        fan_control_enabled: true
-        fan_control_settings:
-          mode: curve
-          temperature_key: edge
-          interval_ms: 500
-          curve:
-            40: 0.30
-            50: 0.40
-            60: 0.55
-            70: 0.70
-            80: 0.90
-          spindown_delay_ms: 3000
-          change_threshold: 2
-          auto_threshold: 40
-      
-      # GPU 2 Balanced settings (identical to GPU 1)
-      10DE:2BB1-10DE:204B-0000:c5:00.0:
-        power_cap: 500.0
-        min_core_clock: 1700
-        max_core_clock: 2500
-        min_memory_clock: 1650
-        max_memory_clock: 1750
-        fan_control_enabled: true
-        fan_control_settings:
-          mode: curve
-          temperature_key: edge
-          interval_ms: 500
-          curve:
-            40: 0.30
-            50: 0.40
-            60: 0.55
-            70: 0.70
-            80: 0.90
-          spindown_delay_ms: 3000
-          change_threshold: 2
-          auto_threshold: 40
-  
-  # Efficiency Profile - Reduced power, quieter operation (applies to BOTH GPUs)
-  Efficiency:
-    gpus:
-      10DE:2BB1-10DE:204B-0000:49:00.0:
-        # Significant power reduction for efficiency
-        power_cap: 420.0   # ~30% reduction (aggressive undervolt)
-        
-        # Lower locked clocks for efficiency
-        min_core_clock: 1500
-        max_core_clock: 2200
-        min_memory_clock: 1550
-        max_memory_clock: 1700  # Below stock
-        
-        # Quiet fan curve
-        fan_control_enabled: true
-        fan_control_settings:
-          mode: curve
-          temperature_key: edge
-          interval_ms: 500
-          curve:
-            40: 0.25
-            50: 0.30
-            60: 0.40
-            70: 0.60
-            80: 0.80
-          spindown_delay_ms: 5000
-          change_threshold: 3
-          auto_threshold: 45
-      
-      # GPU 2 Efficiency settings (identical to GPU 1)
-      10DE:2BB1-10DE:204B-0000:c5:00.0:
-        power_cap: 420.0
-        min_core_clock: 1500
-        max_core_clock: 2200
-        min_memory_clock: 1550
-        max_memory_clock: 1700
-        fan_control_enabled: true
-        fan_control_settings:
-          mode: curve
-          temperature_key: edge
-          interval_ms: 500
-          curve:
-            40: 0.25
-            50: 0.30
-            60: 0.40
-            70: 0.60
-            80: 0.80
-          spindown_delay_ms: 5000
-          change_threshold: 3
-          auto_threshold: 45
-
-# To use a specific profile, uncomment and set:
-# current_profile: Performance
-
-# To enable automatic profile switching based on running applications:
-# auto_switch_profiles: false
-
-
-# ============================================================================
-# USAGE INSTRUCTIONS:
-# ============================================================================
-# 
-# 1. Verify your GPU IDs are correct:
-#    Run: lact cli list-gpus
-#    
-#    Your GPUs (already configured):
-#    - GPU 1: 10DE:2BB1-10DE:204B-0000:49:00.0
-#    - GPU 2: 10DE:2BB1-10DE:204B-0000:c5:00.0
-#    
-#    ✅ No need to replace IDs - they're already set!
-# 
-# 2. Choose your approach:
-#    OPTION A - Locked Clocks (CURRENT DEFAULT):
-#      - Keep the min_core_clock/max_core_clock settings as-is
-#      - These lock the GPU to a specific frequency range
-#      - Good for undervolting while maintaining consistent performance
-#    
-#    OPTION B - Clock Offsets:
-#      - Comment out the locked clock settings (min/max core/memory)
-#      - Uncomment the gpu_clock_offsets and mem_clock_offsets sections
-#      - Better for pure overclocking scenarios
-# 
-# 3. Copy this file to /etc/lact/config.yaml:
-#    sudo cp RTXPro6000Blackwell.yaml /etc/lact/config.yaml
-# 
-# 4. Restart the LACT daemon:
-#    sudo systemctl restart lactd
-#    
-#    Check daemon status:
-#    sudo systemctl status lactd
-# 
-# 5. Monitor BOTH GPUs and test stability:
-#    - View current settings:  lact cli info
-#    - Monitor in real-time:   watch -n 1 nvidia-smi
-#    - Check temperatures:     nvidia-smi -q -d TEMPERATURE
-#    - Monitor power draw:     nvidia-smi -q -d POWER
-# 
-# 6. Stress test for stability (test BOTH GPUs):
-#    - Run GPU benchmark or your typical workload
-#    - Monitor for at least 30 minutes
-#    - Watch for crashes, artifacts, or thermal throttling
-# 
-# 7. Adjust settings incrementally:
-#    FOR LOCKED CLOCKS:
-#    - Reduce max_core_clock by 50 MHz if unstable
-#    - Reduce power_cap by 20W for more aggressive undervolting
-#    - Can try increasing max clocks by +50 MHz if stable
-#    
-#    FOR CLOCK OFFSETS:
-#    - Increase/decrease offsets in ±25-50 MHz increments
-#    - Test stability after each change
-# 
-# 8. Switch between profiles (applies to BOTH GPUs automatically):
-#    lact cli profile set "Performance"     # Maximum performance
-#    lact cli profile set "Balanced"        # Moderate power
-#    lact cli profile set "Efficiency"      # Low power, quiet
-#    
-#    Return to default profile:
-#    lact cli profile set "Default"
-# 
-# 9. DUAL GPU SPECIFIC NOTES:
-#     - Both GPUs will have identical settings applied
-#     - Monitor both cards independently: nvidia-smi (shows both)
-#     - Each GPU has independent fan control
-#     - Total system power: Up to 1200W (2x 600W) at stock
-#     - With 450W cap: ~900W total (much more efficient!)
-#     - Ensure PSU can handle total wattage
-#     - Test each GPU individually if troubleshooting
-# 
-# 10. SAFETY NOTES:
-#     - Settings auto-revert after 5 seconds if system becomes unresponsive
-#     - Always test in incremental steps
-#     - Monitor GPU temperature (keep under 85°C for longevity)
-#     - Professional cards prioritize stability - don't push too hard
-#     - If GPU crashes, reboot to reset to defaults
-#     - Backup this config file before making major changes
-# 
-# ============================================================================
-# IMPORTANT REMINDERS FOR NVIDIA GPUs:
-# ============================================================================
-# 
-# ✓ WORKS on Nvidia in LACT:
-#   - power_cap (PRIMARY undervolting method!)
-#   - min_core_clock + max_core_clock (locked clocks, set together)
-#   - min_memory_clock + max_memory_clock (locked clocks, set together)  
-#   - gpu_clock_offsets (per-pstate offsets)
-#   - mem_clock_offsets (per-pstate offsets)
-#   - fan_control_settings
-# 
-# ✗ DOES NOT WORK on Nvidia in LACT (AMD only):
-#   - min_voltage
-#   - max_voltage
-#   - voltage_offset
-#   - performance_level
-#   - power_states
-#   - power_profile_mode_index
-# 
-# For true voltage curve editing on Nvidia, you need external tools:
-#   - MSI Afterburner (Windows/Wine)
-#   - GreenWithEnvy (Linux GUI)
-#   - nvidia-smi (limited control)
-# 
-# ============================================================================
-
+    power_cap: 600.0
+    min_core_clock: 210
+    max_core_clock: 2600
+    gpu_clock_offsets:
+      0: 1000
+    mem_clock_offsets:
+      0: 4000
+  '10DE:2BB1-10DE:204B-0000:c2:00.0':
+    fan_control_enabled: true
+    fan_control_settings:
+      mode: curve
+      static_speed: 0.5
+      temperature_key: edge
+      interval_ms: 500
+      curve:
+        40: 0.30
+        50: 0.40
+        60: 0.55
+        70: 0.70
+        80: 0.90
+      spindown_delay_ms: 3000
+      change_threshold: 2
+      auto_threshold: 40
+    power_cap: 600.0
+    min_core_clock: 210
+    max_core_clock: 2600
+    gpu_clock_offsets:
+      0: 1000
+    mem_clock_offsets:
+      0: 4000
+current_profile: null
+auto_switch_profiles: false
