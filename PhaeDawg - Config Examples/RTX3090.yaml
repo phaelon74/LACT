@@ -21,13 +21,13 @@ gpus:
       spindown_delay_ms: 3000
       change_threshold: 2
       auto_threshold: 40
-    power_cap: 350.0
+    power_cap: 300.0
     min_core_clock: 210
-    max_core_clock: 2100
+    max_core_clock: 1860
     gpu_clock_offsets:
-      0: 200
+      0: 150
     mem_clock_offsets:
-      0: 600
+      0: 1500
   '10DE:2204-196E:136C-0000:43:00.0':
     fan_control_enabled: true
     fan_control_settings:
@@ -44,13 +44,13 @@ gpus:
       spindown_delay_ms: 3000
       change_threshold: 2
       auto_threshold: 40
-    power_cap: 350.0
+    power_cap: 300.0
     min_core_clock: 210
-    max_core_clock: 2100
+    max_core_clock: 1860
     gpu_clock_offsets:
-      0: 200
+      0: 150
     mem_clock_offsets:
-      0: 600
+      0: 1500
   '10DE:2204-196E:136C-0000:44:00.0':
     fan_control_enabled: true
     fan_control_settings:
@@ -67,13 +67,13 @@ gpus:
       spindown_delay_ms: 3000
       change_threshold: 2
       auto_threshold: 40
-    power_cap: 350.0
+    power_cap: 300.0
     min_core_clock: 210
-    max_core_clock: 2100
+    max_core_clock: 1860
     gpu_clock_offsets:
-      0: 200
+      0: 150
     mem_clock_offsets:
-      0: 600
+      0: 1500
   '10DE:2204-19DA:1613-0000:42:00.0':
     fan_control_enabled: true
     fan_control_settings:
@@ -90,12 +90,12 @@ gpus:
       spindown_delay_ms: 3000
       change_threshold: 2
       auto_threshold: 40
-    power_cap: 350.0
+    power_cap: 300.0
     min_core_clock: 210
-    max_core_clock: 2100
+    max_core_clock: 1860
     gpu_clock_offsets:
-      0: 200
+      0: 150
     mem_clock_offsets:
-      0: 600
+      0: 1500
 current_profile: null
 auto_switch_profiles: false
