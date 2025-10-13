@@ -1,0 +1,62 @@
+phaedawg@d011sd08:~/lact$ lact cli info
+GPU 10DE:2204-196E:136A-0000:41:00.0:
+=====================================
+GPU Model: NVIDIA GeForce RTX 3090 (0x10DE:0x2204)
+Card Manufacturer: PNY (0x196E)
+Card Model: Unknown (0x136A)
+Driver Used: nvidia 580.95.05
+VBIOS Version: 94.02.42.00.A7
+VRAM Size: 24576 MiB
+GPU Family: Ampere
+CUDA Cores: 10496
+⁨ROP⁩ Count: 112 (14 * 8)
+VRAM Type: GDDR6x 384-bit (Micron)
+Resizable BAR: Enabled
+CPU Accessible VRAM: 32768
+PCIe Link Speed: 8 GT/s Gen 3 x4 (Max: 8 GT/s Gen 3 x16)
+GPU 10DE:2204-196E:136C-0000:43:00.0:
+=====================================
+GPU Model: NVIDIA GeForce RTX 3090 (0x10DE:0x2204)
+Card Manufacturer: PNY (0x196E)
+Card Model: Unknown (0x136C)
+Driver Used: nvidia 580.95.05
+VBIOS Version: 94.02.26.48.8F
+VRAM Size: 24576 MiB
+GPU Family: Ampere
+CUDA Cores: 10496
+⁨ROP⁩ Count: 112 (14 * 8)
+VRAM Type: GDDR6x 384-bit (Micron)
+Resizable BAR: Disabled
+CPU Accessible VRAM: 256
+PCIe Link Speed: 8 GT/s Gen 3 x4 (Max: 8 GT/s Gen 3 x16)
+GPU 10DE:2204-196E:136C-0000:44:00.0:
+=====================================
+GPU Model: NVIDIA GeForce RTX 3090 (0x10DE:0x2204)
+Card Manufacturer: PNY (0x196E)
+Card Model: Unknown (0x136C)
+Driver Used: nvidia 580.95.05
+VBIOS Version: 94.02.26.48.8F
+VRAM Size: 24576 MiB
+GPU Family: Ampere
+CUDA Cores: 10496
+⁨ROP⁩ Count: 112 (14 * 8)
+VRAM Type: GDDR6x 384-bit (Micron)
+Resizable BAR: Disabled
+CPU Accessible VRAM: 256
+PCIe Link Speed: 8 GT/s Gen 3 x4 (Max: 8 GT/s Gen 3 x16)
+GPU 10DE:2204-19DA:1613-0000:42:00.0:
+=====================================
+GPU Model: NVIDIA GeForce RTX 3090 (0x10DE:0x2204)
+Card Manufacturer: ZOTAC International (MCO) Ltd. (0x19DA)
+Card Model: Zotac RTX 3090 Trinity (0x1613)
+Driver Used: nvidia 580.95.05
+VBIOS Version: 94.02.42.80.9F
+VRAM Size: 24576 MiB
+GPU Family: Ampere
+CUDA Cores: 10496
+⁨ROP⁩ Count: 112 (14 * 8)
+VRAM Type: GDDR6x 384-bit (Micron)
+Resizable BAR: Disabled
+CPU Accessible VRAM: 256
+PCIe Link Speed: 8 GT/s Gen 3 x4 (Max: 8 GT/s Gen 3 x16)
+phaedawg@d011sd08:~/lact$
