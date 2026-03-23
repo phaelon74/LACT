@@ -1,0 +1,206 @@
+# ============================================================================
+# LACT Config - 6x RTX 3090 - Transient Spike Suppression for LLM Inference
+# ============================================================================
+# 
+# GOAL: Prevent simultaneous transient power spikes from 6 GPUs
+# from overwhelming the SilverStone HELA 2050 Platinum PSU.
+#
+# KEY CHANGES FROM ORIGINAL:
+#   power_cap:          300 -> 250  (matches your stated target)
+#   max_core_clock:    1860 -> 1500 (MAJOR change - reduces voltage from ~1.0V to ~0.8V)
+#   gpu_clock_offsets:  150 -> 100  (less aggressive offset at lower clock)
+#   mem_clock_offsets: 1500 -> 1000 (slightly conservative for stability under constrained power)
+#
+# WHY THIS WORKS:
+#   - Transient spikes scale with VOLTAGE, not power limit.
+#   - At 1860 MHz, the 3090 needs ~0.95-1.0V. Transient spike: ~500W per card.
+#   - At 1500 MHz, the 3090 needs ~0.78-0.85V. Transient spike: ~350W per card.
+#   - 6 cards: old worst-case ~3000W spike, new worst-case ~2100W spike.
+#   - 2100W is within the HELA 2050's ~130% transient tolerance (~2665W).
+#
+# PERFORMANCE IMPACT ON LLM INFERENCE:
+#   - Token generation is MEMORY-BOUND. Core clock barely matters.
+#   - Expected throughput loss: ~3-8% on prompt processing (compute-bound phase)
+#   - Expected throughput loss: ~0-2% on token generation (memory-bound phase)
+#   - This is a very favorable tradeoff vs. system crashes.
+#
+# TUNING GUIDE:
+#   If stable at these settings, you can try raising max_core_clock in +50 MHz
+#   increments (1550, 1600, etc.) and testing with back-to-back inferences.
+#   If it crashes, drop back down. The sweet spot is likely 1500-1600 MHz.
+#
+# ============================================================================
+
+version: 5
+
+daemon:
+  log_level: info
+  admin_group: sudo
+  disable_clocks_cleanup: false
+  apply_settings_timer: 5
+
+gpus:
+  # -----------------------------------------------------------------------
+  # GPU 1: 10DE:2204-196E:136A-0000:41:00.0
+  # -----------------------------------------------------------------------
+  '10DE:2204-196E:136A-0000:41:00.0':
+    fan_control_enabled: true
+    fan_control_settings:
+      mode: curve
+      static_speed: 0.5
+      temperature_key: edge
+      interval_ms: 500
+      curve:
+        40: 0.30
+        50: 0.40
+        60: 0.55
+        70: 0.70
+        80: 0.90
+      spindown_delay_ms: 3000
+      change_threshold: 2
+      auto_threshold: 40
+    power_cap: 250.0
+    min_core_clock: 210
+    max_core_clock: 1500
+    gpu_clock_offsets:
+      0: 100
+    mem_clock_offsets:
+      0: 1000
+
+  # -----------------------------------------------------------------------
+  # GPU 2: 10DE:2204-196E:136C-0000:43:00.0
+  # -----------------------------------------------------------------------
+  '10DE:2204-196E:136C-0000:43:00.0':
+    fan_control_enabled: true
+    fan_control_settings:
+      mode: curve
+      static_speed: 0.5
+      temperature_key: edge
+      interval_ms: 500
+      curve:
+        40: 0.30
+        50: 0.40
+        60: 0.55
+        70: 0.70
+        80: 0.90
+      spindown_delay_ms: 3000
+      change_threshold: 2
+      auto_threshold: 40
+    power_cap: 250.0
+    min_core_clock: 210
+    max_core_clock: 1500
+    gpu_clock_offsets:
+      0: 100
+    mem_clock_offsets:
+      0: 1000
+
+  # -----------------------------------------------------------------------
+  # GPU 3: 10DE:2204-196E:136C-0000:44:00.0
+  # -----------------------------------------------------------------------
+  '10DE:2204-196E:136C-0000:44:00.0':
+    fan_control_enabled: true
+    fan_control_settings:
+      mode: curve
+      static_speed: 0.5
+      temperature_key: edge
+      interval_ms: 500
+      curve:
+        40: 0.30
+        50: 0.40
+        60: 0.55
+        70: 0.70
+        80: 0.90
+      spindown_delay_ms: 3000
+      change_threshold: 2
+      auto_threshold: 40
+    power_cap: 250.0
+    min_core_clock: 210
+    max_core_clock: 1500
+    gpu_clock_offsets:
+      0: 100
+    mem_clock_offsets:
+      0: 1000
+
+  # -----------------------------------------------------------------------
+  # GPU 4: 10DE:2204-19DA:1613-0000:42:00.0
+  # -----------------------------------------------------------------------
+  '10DE:2204-19DA:1613-0000:42:00.0':
+    fan_control_enabled: true
+    fan_control_settings:
+      mode: curve
+      static_speed: 0.5
+      temperature_key: edge
+      interval_ms: 500
+      curve:
+        40: 0.30
+        50: 0.40
+        60: 0.55
+        70: 0.70
+        80: 0.90
+      spindown_delay_ms: 3000
+      change_threshold: 2
+      auto_threshold: 40
+    power_cap: 250.0
+    min_core_clock: 210
+    max_core_clock: 1500
+    gpu_clock_offsets:
+      0: 100
+    mem_clock_offsets:
+      0: 1000
+
+  # -----------------------------------------------------------------------
+  # GPU 5: PLACEHOLDER - Replace with actual PCI ID from 'lact cli list-gpus'
+  # -----------------------------------------------------------------------
+  # '10DE:2204-XXXX:XXXX-0000:XX:00.0':
+  #   fan_control_enabled: true
+  #   fan_control_settings:
+  #     mode: curve
+  #     static_speed: 0.5
+  #     temperature_key: edge
+  #     interval_ms: 500
+  #     curve:
+  #       40: 0.30
+  #       50: 0.40
+  #       60: 0.55
+  #       70: 0.70
+  #       80: 0.90
+  #     spindown_delay_ms: 3000
+  #     change_threshold: 2
+  #     auto_threshold: 40
+  #   power_cap: 250.0
+  #   min_core_clock: 210
+  #   max_core_clock: 1500
+  #   gpu_clock_offsets:
+  #     0: 100
+  #   mem_clock_offsets:
+  #     0: 1000
+
+  # -----------------------------------------------------------------------
+  # GPU 6: PLACEHOLDER - Replace with actual PCI ID from 'lact cli list-gpus'
+  # -----------------------------------------------------------------------
+  # '10DE:2204-XXXX:XXXX-0000:XX:00.0':
+  #   fan_control_enabled: true
+  #   fan_control_settings:
+  #     mode: curve
+  #     static_speed: 0.5
+  #     temperature_key: edge
+  #     interval_ms: 500
+  #     curve:
+  #       40: 0.30
+  #       50: 0.40
+  #       60: 0.55
+  #       70: 0.70
+  #       80: 0.90
+  #     spindown_delay_ms: 3000
+  #     change_threshold: 2
+  #     auto_threshold: 40
+  #   power_cap: 250.0
+  #   min_core_clock: 210
+  #   max_core_clock: 1500
+  #   gpu_clock_offsets:
+  #     0: 100
+  #   mem_clock_offsets:
+  #     0: 1000
+
+current_profile: null
+auto_switch_profiles: false
