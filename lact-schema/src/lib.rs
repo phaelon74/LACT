@@ -15,9 +15,9 @@ pub use response::Response;
 
 use amdgpu_sysfs::{
     gpu_handle::{
+        PerformanceLevel,
         fan_control::FanInfo,
         overdrive::{ClocksTable as _, ClocksTableGen as AmdClocksTableGen},
-        PerformanceLevel,
     },
     hw_mon::Temperature,
 };
@@ -59,6 +59,10 @@ pub type FanCurveMap = BTreeMap<i32, f32>;
 
 pub fn default_fan_curve() -> FanCurveMap {
     [(40, 0.3), (50, 0.35), (60, 0.5), (70, 0.75), (80, 1.0)].into()
+}
+
+pub fn bytes_to_mib(bytes: u64) -> f64 {
+    bytes as f64 / 1024.0 / 1024.0
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -131,7 +135,8 @@ pub struct DeviceInfo {
     pub pci_info: Option<GpuPciInfo>,
     #[serde(default)]
     pub vulkan_instances: Vec<VulkanInfo>,
-    pub opencl_info: Option<OpenCLInfo>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub opencl_instances: Vec<OpenCLInfo>,
     pub driver: String,
     pub vbios_version: Option<String>,
     pub link_info: LinkInfo,
@@ -219,7 +224,7 @@ impl DeviceInfo {
                 stats
                     .vram
                     .total
-                    .map(|size| format!("{} MiB", size / 1024 / 1024)),
+                    .map(|size| format!("{} Mb", bytes_to_mib(size))),
             ));
         }
 
@@ -239,10 +244,10 @@ impl DeviceInfo {
                     write!(vram_type, " ({vram_vendor})").unwrap();
                 }
 
-                if let Some(bw) = &drm_info.vram_max_bw {
-                    if bw != "0" {
-                        write!(vram_type, " {bw} GiB/s").unwrap();
-                    }
+                if let Some(bw) = &drm_info.vram_max_bw
+                    && bw != "0"
+                {
+                    write!(vram_type, " {bw} GiB/s").unwrap();
                 }
             }
 
@@ -305,19 +310,20 @@ impl DeviceInfo {
 
                 elements.push((
                     fl!(LANGUAGE_LOADER, "cpu-vram"),
-                    Some((memory_info.cpu_accessible_total / 1024 / 1024).to_string()),
+                    Some(format!(
+                        "{} MiB",
+                        memory_info.cpu_accessible_total / 1024 / 1024
+                    )),
                 ));
             }
         }
 
         if let (Some(max_link_speed), Some(max_link_width)) =
             (&self.link_info.max_speed, &self.link_info.max_width)
-        {
-            if let (Some(current_link_speed), Some(current_link_width)) =
+            && let (Some(current_link_speed), Some(current_link_width)) =
                 (&self.link_info.current_speed, &self.link_info.current_width)
-            {
-                elements.push((fl!(LANGUAGE_LOADER, "pcie-speed"), Some(format!("{current_link_speed} x{current_link_width} (Max: {max_link_speed} x{max_link_width})"))));
-            }
+        {
+            elements.push((fl!(LANGUAGE_LOADER, "pcie-speed"), Some(format!("{current_link_speed} x{current_link_width} (Max: {max_link_speed} x{max_link_width})"))));
         }
 
         elements
@@ -345,8 +351,19 @@ pub struct DrmInfo {
     pub cache_info: Option<CacheInfo>,
     pub rop_info: Option<RopInfo>,
     pub memory_info: Option<DrmMemoryInfo>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub amd_ip_info: Vec<AmdIpInfo>,
     #[serde(flatten)]
     pub intel: IntelDrmInfo,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct AmdIpInfo {
+    pub ip_type: String,
+    pub version_major: u32,
+    pub version_minor: u32,
+    pub queues: u32,
+    pub count: u32,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -518,13 +535,22 @@ pub struct DeviceStats {
     pub voltage: VoltageStats,
     pub vram: VramStats,
     pub power: PowerStats,
-    pub temps: HashMap<String, Temperature>,
+    pub temps: HashMap<String, TemperatureEntry>,
     pub busy_percent: Option<u8>,
     pub performance_level: Option<PerformanceLevel>,
     pub core_power_state: Option<usize>,
     pub memory_power_state: Option<usize>,
     pub pcie_power_state: Option<usize>,
     pub throttle_info: Option<BTreeMap<String, Vec<String>>>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct TemperatureEntry {
+    #[serde(flatten)]
+    pub value: Temperature,
+    /// If the temperature can be used for fan control
+    #[serde(default)]
+    pub display_only: bool,
 }
 
 #[skip_serializing_none]
@@ -551,6 +577,13 @@ pub struct FanStats {
     pub pmfw_info: PmfwInfo,
 }
 
+impl FanStats {
+    pub fn percent(&self) -> Option<u64> {
+        self.pwm_current
+            .map(|pwm| ((pwm as f64 / u8::MAX as f64) * 100.0).round() as u64)
+    }
+}
+
 #[skip_serializing_none]
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PmfwInfo {
@@ -563,19 +596,23 @@ pub struct PmfwInfo {
 }
 
 #[skip_serializing_none]
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct ClockspeedStats {
     pub gpu_clockspeed: Option<u64>,
     /// Target clock
-    pub current_gfxclk: Option<u64>,
+    #[serde(alias = "current_gfxclk")]
+    pub target_gpu_clockspeed: Option<u64>,
     pub vram_clockspeed: Option<u64>,
+    #[serde(default)]
+    pub sensors: HashMap<String, u64>,
 }
 
 #[skip_serializing_none]
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct VoltageStats {
     pub gpu: Option<u64>,
-    pub northbridge: Option<u64>,
+    #[serde(default)]
+    pub sensors: HashMap<String, u64>,
 }
 
 #[skip_serializing_none]
@@ -586,7 +623,7 @@ pub struct VramStats {
 }
 
 #[skip_serializing_none]
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct PowerStats {
     pub average: Option<f64>,
     pub current: Option<f64>,
@@ -594,6 +631,8 @@ pub struct PowerStats {
     pub cap_max: Option<f64>,
     pub cap_min: Option<f64>,
     pub cap_default: Option<f64>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub sensors: HashMap<String, f64>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
@@ -605,6 +644,28 @@ pub struct PowerStates {
 impl PowerStates {
     pub fn is_empty(&self) -> bool {
         self.core.is_empty() && self.vram.is_empty()
+    }
+
+    pub fn max_gpu_clock(&self) -> Option<u64> {
+        self.core.iter().map(|s| s.value).max()
+    }
+
+    pub fn min_gpu_clock(&self) -> Option<u64> {
+        self.core
+            .iter()
+            .filter_map(|s| s.min_value.or(Some(s.value)))
+            .min()
+    }
+
+    pub fn max_vram_clock(&self) -> Option<u64> {
+        self.vram.iter().map(|s| s.value).max()
+    }
+
+    pub fn min_vram_clock(&self) -> Option<u64> {
+        self.vram
+            .iter()
+            .filter_map(|s| s.min_value.or(Some(s.value)))
+            .min()
     }
 }
 

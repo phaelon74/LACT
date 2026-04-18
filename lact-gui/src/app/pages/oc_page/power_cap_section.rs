@@ -1,10 +1,10 @@
 use crate::{
+    APP_BROKER, I18N,
     app::{
         msg::AppMsg,
         page_section::PageSection,
-        pages::{oc_adjustment::OcAdjustment, PageUpdate},
+        pages::{PageUpdate, oc_adjustment::OcAdjustment},
     },
-    APP_BROKER, I18N,
 };
 use gtk::{
     glib::object::ObjectExt,
@@ -39,8 +39,16 @@ impl relm4::Component for PowerCapSection {
     view! {
         #[root]
         PageSection::new(&fl!(I18N, "power-cap")) {
-            append = &gtk::Box {
+            append_header = &gtk::Button {
+                    set_label: &fl!(I18N, "reset-button"),
+                    connect_clicked => PowerCapMsg::Reset,
+
+                    set_halign: gtk::Align::End,
+                    set_hexpand: true,
+            },
+            append_child = &gtk::Box {
                 set_orientation: gtk::Orientation::Horizontal,
+                set_spacing: 10,
 
                 gtk::Label {
                     #[watch]
@@ -54,11 +62,6 @@ impl relm4::Component for PowerCapSection {
                     set_margin_horizontal: 5,
                     set_draw_value: false,
                     set_adjustment: adjustment,
-                },
-
-                gtk::Button {
-                    set_label: &fl!(I18N, "reset-button"),
-                    connect_clicked => PowerCapMsg::Reset,
                 },
             }
         },
@@ -98,7 +101,7 @@ impl relm4::Component for PowerCapSection {
                 // The signal blocking has to be manual,
                 // because relm's signal block macro feature doesn't seem to work with non-widget objects
                 self.adjustment.block_signal(&widgets.value_notify);
-                let power = stats.power;
+                let power = stats.power.clone();
 
                 self.adjustment.set_upper(power.cap_max.unwrap_or_default());
                 self.adjustment.set_lower(power.cap_min.unwrap_or_default());

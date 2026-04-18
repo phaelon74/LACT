@@ -29,6 +29,19 @@ expression: device_info
     },
     "flags": [],
     "link_info": {},
+    "opencl_instances": [
+      {
+        "c_version": "OpenCL C 1.2 ",
+        "compute_units": 128,
+        "device_name": "Intel(R) Arc(TM) A380 Graphics",
+        "driver_version": "25.48.36300",
+        "global_memory": 6064541696,
+        "local_memory": 65536,
+        "platform_name": "Intel(R) OpenCL Graphics",
+        "version": "OpenCL 3.0 NEO ",
+        "workgroup_size": 1024
+      }
+    ],
     "pci_info": {
       "device_pci_info": {
         "model": "DG2 [Arc A380]",
@@ -83,8 +96,9 @@ expression: device_info
   },
   "stats": {
     "clockspeed": {
-      "current_gfxclk": 600,
-      "gpu_clockspeed": 600
+      "gpu_clockspeed": 600,
+      "sensors": {},
+      "target_gpu_clockspeed": 600
     },
     "fan": {
       "control_enabled": false,
@@ -101,12 +115,14 @@ expression: device_info
       "gpu": {
         "crit": null,
         "crit_hyst": null,
-        "current": 55.0
+        "current": 55.0,
+        "display_only": true
       }
     },
     "throttle_info": {},
     "voltage": {
-      "gpu": 603
+      "gpu": 603,
+      "sensors": {}
     },
     "vram": {}
   }

@@ -2,9 +2,9 @@ mod subcommands;
 
 use crate::subcommands::{
     current_auto_switch, current_profile, info, list_gpus, list_profiles, power_limit,
-    set_auto_switch, set_profile, snapshot,
+    set_auto_switch, set_profile, snapshot, stats,
 };
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use lact_client::DaemonClient;
 use lact_schema::{
     args::cli::{CliArgs, CliCommand, ProfileAutoSwitchCommand, ProfileCommand},
@@ -28,6 +28,7 @@ pub fn run(args: CliArgs) -> Result<()> {
         match &args.subcommand {
             CliCommand::List => list_gpus(ctx).await,
             CliCommand::Info => info(ctx).await,
+            CliCommand::Stats => stats(ctx).await,
             CliCommand::Snapshot => snapshot(ctx).await,
             CliCommand::PowerLimit { cmd } => power_limit(ctx, cmd.as_ref()).await,
             CliCommand::Profile(profile_args) => match &profile_args.subcommand {

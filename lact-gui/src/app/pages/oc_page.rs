@@ -5,12 +5,13 @@ mod power_cap_section;
 mod power_states;
 
 use super::PageUpdate;
+use crate::app::pages::oc_page::gpu_stats_section::GpuStatsSectionMsg;
 use crate::{
-    app::{ext::RelmDefaultLauchable, msg::AppMsg},
     I18N,
+    app::{ext::RelmDefaultLauchable, msg::AppMsg},
 };
 use amdgpu_sysfs::gpu_handle::{
-    power_profile_mode::PowerProfileModesTable, PerformanceLevel, PowerLevelKind,
+    PerformanceLevel, PowerLevelKind, power_profile_mode::PowerProfileModesTable,
 };
 use clocks_frame::{ClocksFrame, ClocksFrameMsg};
 use gpu_stats_section::GpuStatsSection;
@@ -20,7 +21,7 @@ use gtk::{
 };
 use i18n_embed_fl::fl;
 use indexmap::IndexMap;
-use lact_schema::{request::SetClocksCommand, ClocksTable, DeviceInfo, PowerStates, SystemInfo};
+use lact_schema::{ClocksTable, DeviceInfo, PowerStates, SystemInfo, request::SetClocksCommand};
 use performance_frame::{PerformanceFrame, PerformanceFrameMsg};
 use power_cap_section::{PowerCapMsg, PowerCapSection};
 use power_states::power_states_frame::{PowerStatesFrame, PowerStatesFrameMsg};
@@ -61,48 +62,46 @@ impl relm4::Component for OcPage {
     type CommandOutput = ();
 
     view! {
-        gtk::ScrolledWindow {
-            set_hscrollbar_policy: gtk::PolicyType::Never,
+        gtk::Box {
+            set_orientation: gtk::Orientation::Vertical,
+            set_spacing: 10,
+            set_margin_horizontal: 30,
+            set_margin_top: 15,
+            set_margin_bottom: 60,
 
-            gtk::Box {
-                set_orientation: gtk::Orientation::Vertical,
-                set_spacing: 15,
-                set_margin_horizontal: 20,
+            gtk::Frame {
+                #[watch]
+                set_visible: model.system_info.amdgpu_overdrive_enabled == Some(false) && model.device_info.as_ref().is_some_and(|info| info.driver == "amdgpu"),
+                set_label_align: 0.3,
 
-                gtk::Frame {
-                    #[watch]
-                    set_visible: model.system_info.amdgpu_overdrive_enabled == Some(false) && model.device_info.as_ref().is_some_and(|info| info.driver == "amdgpu"),
-                    set_label_align: 0.3,
+                gtk::Box {
+                    set_orientation: gtk::Orientation::Vertical,
+                    set_spacing: 2,
+                    set_margin_all: 10,
 
-                    gtk::Box {
-                        set_orientation: gtk::Orientation::Vertical,
-                        set_spacing: 2,
-                        set_margin_all: 10,
+                    gtk::Label {
+                        set_markup: &fl!(I18N, "amd-oc-disabled"),
+                        set_wrap: true,
+                        set_wrap_mode: pango::WrapMode::Word,
+                    },
 
-                        gtk::Label {
-                            set_markup: &fl!(I18N, "amd-oc-disabled"),
-                            set_wrap: true,
-                            set_wrap_mode: pango::WrapMode::Word,
-                        },
+                    gtk::Button {
+                        set_label: &fl!(I18N, "enable-amd-oc"),
+                        set_halign: gtk::Align::End,
 
-                        gtk::Button {
-                            set_label: &fl!(I18N, "enable-amd-oc"),
-                            set_halign: gtk::Align::End,
-
-                            connect_clicked[sender] => move |_| {
-                                sender.output(AppMsg::ShowOverdriveDialog).expect("Channel closed");
-                            }
-                        },
+                        connect_clicked[sender] => move |_| {
+                            sender.output(AppMsg::ShowOverdriveDialog).expect("Channel closed");
+                        }
                     },
                 },
+            },
 
-                model.stats_section.widget(),
-                model.power_cap_section.widget(),
-                model.performance_frame.widget(),
-                model.power_states_frame.widget(),
-                model.clocks_frame.widget(),
-            }
-        }
+            model.stats_section.widget(),
+            model.power_cap_section.widget(),
+            model.performance_frame.widget(),
+            model.power_states_frame.widget(),
+            model.clocks_frame.widget(),
+        },
     }
 
     fn init(
@@ -141,41 +140,43 @@ impl relm4::Component for OcPage {
         _root: &Self::Root,
     ) {
         match msg {
-            OcPageMsg::Update { update, initial } => {
-                self.stats_section.emit(update.clone());
-                match &update {
-                    PageUpdate::Stats(stats) => {
-                        self.power_states_frame
-                            .emit(PowerStatesFrameMsg::Stats(stats.clone()));
+            OcPageMsg::Update { update, initial } => match &update {
+                PageUpdate::Stats(stats) => {
+                    self.power_states_frame
+                        .emit(PowerStatesFrameMsg::Stats(stats.clone()));
 
-                        if initial {
-                            self.power_cap_section
-                                .emit(PowerCapMsg::Update(update.clone()));
+                    self.stats_section
+                        .emit(GpuStatsSectionMsg::Stats(stats.clone()));
 
-                            if stats.power.cap_current.is_some() {
-                                self.power_cap_section.widget().set_visible(true);
-                            } else {
-                                self.power_cap_section.widget().set_visible(false);
-                            }
+                    if initial {
+                        self.power_cap_section
+                            .emit(PowerCapMsg::Update(update.clone()));
 
-                            self.performance_frame
-                                .emit(PerformanceFrameMsg::PerformanceLevel(
-                                    stats.performance_level,
-                                ));
-                            sender.input(OcPageMsg::PerformanceLevelChanged);
+                        if stats.power.cap_current.is_some() {
+                            self.power_cap_section.widget().set_visible(true);
+                        } else {
+                            self.power_cap_section.widget().set_visible(false);
                         }
-                    }
-                    PageUpdate::Info(info) => {
-                        let vram_clock_ratio = info.vram_clock_ratio();
 
-                        self.device_info = Some(info.clone());
-                        self.power_states_frame
-                            .emit(PowerStatesFrameMsg::VramClockRatio(vram_clock_ratio));
-                        self.clocks_frame
-                            .emit(ClocksFrameMsg::VramRatio(vram_clock_ratio));
+                        self.performance_frame
+                            .emit(PerformanceFrameMsg::PerformanceLevel(
+                                stats.performance_level,
+                            ));
+                        sender.input(OcPageMsg::PerformanceLevelChanged);
                     }
                 }
-            }
+                PageUpdate::Info(info) => {
+                    let vram_clock_ratio = info.vram_clock_ratio();
+
+                    self.device_info = Some(info.clone());
+                    self.stats_section
+                        .emit(GpuStatsSectionMsg::Info(info.clone()));
+                    self.power_states_frame
+                        .emit(PowerStatesFrameMsg::VramClockRatio(vram_clock_ratio));
+                    self.clocks_frame
+                        .emit(ClocksFrameMsg::VramRatio(vram_clock_ratio));
+                }
+            },
             OcPageMsg::ClocksTable(table) => {
                 self.clocks_frame.emit(ClocksFrameMsg::Clocks(table));
             }
@@ -189,9 +190,11 @@ impl relm4::Component for OcPage {
             } => {
                 self.power_states_frame
                     .emit(PowerStatesFrameMsg::PowerStates {
-                        pstates,
+                        pstates: pstates.clone(),
                         configured,
                     });
+                self.stats_section
+                    .emit(GpuStatsSectionMsg::PowerStates(Arc::new(pstates)));
                 sender.input(OcPageMsg::PerformanceLevelChanged);
             }
             OcPageMsg::PerformanceLevelChanged => {

@@ -11,10 +11,6 @@ build-release:
 build-debug:
 	cargo build -p lact
 	
-.PHONY: build-release-libadwaita
-build-release-libadwaita:
-	cargo build -p lact --release --features=adw
-	
 .PHONY: build-release-headless
 build-release-headless:
 	cargo build -p lact --release --no-default-features --features=nvidia
@@ -23,7 +19,7 @@ build-release-headless:
 install-resources:
 	install -Dm644 res/lactd.service $(DESTDIR)$(PREFIX)/lib/systemd/system/lactd.service
 	install -Dm644 res/io.github.ilya_zlobintsev.LACT.desktop $(DESTDIR)$(PREFIX)/share/applications/io.github.ilya_zlobintsev.LACT.desktop
-	install -Dm644 res/io.github.ilya_zlobintsev.LACT.png $(DESTDIR)$(PREFIX)/share/pixmaps/io.github.ilya_zlobintsev.LACT.png
+	install -Dm644 res/io.github.ilya_zlobintsev.LACT.png $(DESTDIR)$(PREFIX)/share/icons/hicolor/512x512/apps/io.github.ilya_zlobintsev.LACT.png
 	install -Dm644 res/io.github.ilya_zlobintsev.LACT.svg $(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps/io.github.ilya_zlobintsev.LACT.svg
 	install -Dm644 res/io.github.ilya_zlobintsev.LACT.metainfo.xml $(DESTDIR)$(PREFIX)/share/metainfo/io.github.ilya_zlobintsev.LACT.metainfo.xml
 
@@ -40,6 +36,7 @@ uninstall:
 	rm $(DESTDIR)$(PREFIX)/bin/lact
 	rm $(DESTDIR)$(PREFIX)/lib/systemd/system/lactd.service
 	rm $(DESTDIR)$(PREFIX)/share/applications/io.github.ilya_zlobintsev.LACT.desktop
-	rm $(DESTDIR)$(PREFIX)/share/pixmaps/io.github.ilya_zlobintsev.LACT.png
+	rm -f $(DESTDIR)$(PREFIX)/share/pixmaps/io.github.ilya_zlobintsev.LACT.png
+	rm $(DESTDIR)$(PREFIX)/share/icons/hicolor/512x512/apps/io.github.ilya_zlobintsev.LACT.png
 	rm $(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps/io.github.ilya_zlobintsev.LACT.svg
 	rm $(DESTDIR)$(PREFIX)/share/metainfo/io.github.ilya_zlobintsev.LACT.metainfo.xml

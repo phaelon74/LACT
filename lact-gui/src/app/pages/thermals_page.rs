@@ -1,35 +1,37 @@
 mod fan_curve_frame;
 
-use super::{
-    oc_adjustment::OcAdjustment,
-    oc_page::gpu_stats_section::{temperature_text, throttling_text},
-    PageUpdate,
-};
+use super::{PageUpdate, oc_adjustment::OcAdjustment};
+use crate::app::ext::FlowBoxExt;
 use crate::{
-    app::{formatting::Mono, info_row::InfoRow, msg::AppMsg, page_section::PageSection},
     APP_BROKER, I18N,
+    app::{
+        formatting::{fmt_fan_speed, fmt_temperature_text, fmt_throttling_text},
+        info_row::InfoRow,
+        msg::AppMsg,
+        page_section::PageSection,
+    },
 };
 use amdgpu_sysfs::gpu_handle::fan_control::FanInfo;
 use fan_curve_frame::{
-    CurveSetupMsg, FanCurveFrame, FanCurveFrameMsg, DEFAULT_SPEED_RANGE, DEFAULT_TEMP_RANGE,
+    CurveSetupMsg, DEFAULT_SPEED_RANGE, DEFAULT_TEMP_RANGE, FanCurveFrame, FanCurveFrameMsg,
 };
 use gtk::{
+    Adjustment,
     glib::{
-        self,
+        self, SignalHandlerId,
         object::{Cast, ObjectExt},
-        SignalHandlerId,
     },
     prelude::{AdjustmentExt, BoxExt, ButtonExt, OrientableExt, RangeExt, ScaleExt, WidgetExt},
-    Adjustment,
 };
 use i18n_embed_fl::fl;
 use lact_schema::{
+    DeviceFlag, FanControlMode, SystemInfo,
     config::{FanControlSettings, FanCurve, GpuConfig},
-    default_fan_curve, DeviceFlag, FanControlMode, SystemInfo,
+    default_fan_curve,
 };
 use relm4::{
-    binding::{Binding, BoolBinding, ConnectBinding, StringBinding},
     ComponentController, ComponentParts, ComponentSender, RelmObjectExt, RelmWidgetExt,
+    binding::{Binding, BoolBinding, ConnectBinding, StringBinding},
 };
 use std::{cell::Cell, rc::Rc};
 
@@ -95,246 +97,257 @@ impl relm4::Component for ThermalsPage {
     type CommandOutput = ();
 
     view! {
-        gtk::ScrolledWindow {
-            set_policy: (gtk::PolicyType::Never, gtk::PolicyType::Automatic),
+        gtk::Box {
+            set_orientation: gtk::Orientation::Vertical,
+            set_spacing: 15,
+            set_margin_vertical: 15,
+            set_margin_horizontal: 30,
 
-            gtk::Box {
-                set_orientation: gtk::Orientation::Vertical,
-                set_spacing: 15,
-                set_margin_horizontal: 20,
+            gtk::Frame {
+                #[watch]
+                set_visible: model.system_info.amdgpu_overdrive_enabled == Some(false)
+                    && model.has_pmfw
+                    && model.fan_speed.is_some(),
 
-                gtk::Frame {
-                    #[watch]
-                    set_visible: model.system_info.amdgpu_overdrive_enabled == Some(false) && model.has_pmfw,
-
-                    gtk::Label {
-                        set_label: &fl!(I18N, "oc-missing-fan-control-warning"),
-                    },
+                gtk::Label {
+                    set_label: &fl!(I18N, "oc-missing-fan-control-warning"),
                 },
+            },
 
-                PageSection::new(&fl!(I18N, "monitoring-section")) {
-                    append = &InfoRow {
+            PageSection::new(&fl!(I18N, "monitoring-section")) {
+                append_child = &gtk::FlowBox {
+                    set_orientation: gtk::Orientation::Horizontal,
+                    set_column_spacing: 10,
+                    set_homogeneous: true,
+                    set_min_children_per_line: 2,
+                    set_max_children_per_line: 4,
+                    set_selection_mode: gtk::SelectionMode::None,
+
+                    append_child = &InfoRow {
                         set_name: fl!(I18N, "temperatures"),
                         #[watch]
                         set_value: model.temperatures.as_deref().unwrap_or("No sensors found"),
                     },
 
-                    append = &InfoRow {
+                    append_child = &InfoRow {
                         set_name: fl!(I18N, "fan-speed"),
                         #[watch]
                         set_value: model.fan_speed.as_deref().unwrap_or("No fan detected"),
                     },
 
-                    append = &InfoRow {
+                    append_child = &InfoRow {
                         set_name: fl!(I18N, "throttling"),
                         #[watch]
                         set_value: model.throttling.as_str(),
                     },
+                }
+            },
+
+            PageSection::new(&fl!(I18N, "fan-control-section")) {
+                // Disable fan configuration when overdrive is disabled on GPUs that have PMFW (RDNA3+)
+                #[watch]
+                set_sensitive: model.custom_control_supported,
+
+                append_child = &gtk::StackSwitcher {
+                    set_stack: Some(&stack),
                 },
 
-                PageSection::new(&fl!(I18N, "fan-control-section")) {
-                    // Disable fan configuration when overdrive is disabled on GPUs that have PMFW (RDNA3+)
+                #[name = "stack"]
+                append_child = &gtk::Stack {
+                    set_vexpand: false,
+                    set_vhomogeneous: false,
+
                     #[watch]
-                    set_sensitive: model.custom_control_supported,
+                    set_visible: model.fan_speed.is_some(),
 
-                    append = &gtk::StackSwitcher {
-                        set_stack: Some(&stack),
-                    },
+                    add_titled[Some(AUTO_PAGE), &fl!(I18N, "auto-page")] = &gtk::Box {
+                        set_orientation: gtk::Orientation::Vertical,
+                        set_spacing: 5,
 
-                    #[name = "stack"]
-                    append = &gtk::Stack {
-                        #[watch]
-                        set_visible: model.fan_speed.is_some(),
+                        #[template]
+                        FanSettingRow {
+                            #[watch]
+                            set_visible: !adj_is_empty(&model.pmfw_options.target_temperature),
 
-                        add_titled[Some(AUTO_PAGE), &fl!(I18N, "auto-page")] = &gtk::Box {
-                            set_orientation: gtk::Orientation::Vertical,
-                            set_spacing: 5,
-
-                            #[template]
-                            FanSettingRow {
-                                #[watch]
-                                set_visible: !adj_is_empty(&model.pmfw_options.target_temperature),
-
-                                #[template_child]
-                                label {
-                                    set_label: &fl!(I18N, "target-temp"),
-                                    set_size_group: &label_size_group,
-                                },
-
-                                #[template_child]
-                                scale {
-                                    set_adjustment: &model.pmfw_options.target_temperature,
-                                },
-
-                                #[template_child]
-                                spinbutton {
-                                    set_adjustment: &model.pmfw_options.target_temperature,
-                                    set_size_group: &spin_size_group,
-                                },
+                            #[template_child]
+                            label {
+                                set_label: &fl!(I18N, "target-temp"),
+                                set_size_group: &label_size_group,
                             },
 
-                            #[template]
-                            FanSettingRow {
-                                #[watch]
-                                set_visible: !adj_is_empty(&model.pmfw_options.acoustic_limit),
-
-                                #[template_child]
-                                label {
-                                    set_label: &fl!(I18N, "acoustic-limit"),
-                                    set_size_group: &label_size_group,
-                                },
-
-                                #[template_child]
-                                scale {
-                                    set_adjustment: &model.pmfw_options.acoustic_limit,
-                                },
-
-                                #[template_child]
-                                spinbutton {
-                                    set_adjustment: &model.pmfw_options.acoustic_limit,
-                                    set_size_group: &spin_size_group,
-                                },
+                            #[template_child]
+                            scale {
+                                set_adjustment: &model.pmfw_options.target_temperature,
                             },
 
-                            #[template]
-                            FanSettingRow {
-                                #[watch]
-                                set_visible: !adj_is_empty(&model.pmfw_options.acoustic_target),
-
-                                #[template_child]
-                                label {
-                                    set_label: &fl!(I18N, "acoustic-target"),
-                                    set_size_group: &label_size_group,
-                                },
-
-                                #[template_child]
-                                scale {
-                                    set_adjustment: &model.pmfw_options.acoustic_target,
-                                },
-
-                                #[template_child]
-                                spinbutton {
-                                    set_adjustment: &model.pmfw_options.acoustic_target,
-                                    set_size_group: &spin_size_group,
-                                },
-                            },
-
-                            #[template]
-                            FanSettingRow {
-                                #[watch]
-                                set_visible: !adj_is_empty(&model.pmfw_options.minimum_pwm),
-
-                                #[template_child]
-                                label {
-                                    set_label: &fl!(I18N, "min-fan-speed"),
-                                    set_size_group: &label_size_group,
-                                },
-
-                                #[template_child]
-                                scale {
-                                    set_adjustment: &model.pmfw_options.minimum_pwm,
-                                },
-
-                                #[template_child]
-                                spinbutton {
-                                    set_adjustment: &model.pmfw_options.minimum_pwm,
-                                    set_size_group: &spin_size_group,
-                                },
-                            },
-
-                            gtk::Box {
-                                set_orientation: gtk::Orientation::Horizontal,
-                                set_spacing: 5,
-                                #[watch]
-                                set_visible: model.pmfw_options.zero_rpm_available.get(),
-
-                                gtk::Label {
-                                    set_label: &fl!(I18N, "zero-rpm"),
-                                    set_xalign: 0.0,
-                                    set_size_group: &label_size_group,
-                                },
-
-                                gtk::Switch {
-                                    bind: &model.pmfw_options.zero_rpm,
-                                    set_hexpand: true,
-                                    set_halign: gtk::Align::End,
-                                },
-                            },
-
-                            #[template]
-                            FanSettingRow {
-                                #[watch]
-                                set_visible: !adj_is_empty(&model.pmfw_options.zero_rpm_temperature),
-
-                                #[template_child]
-                                label {
-                                    set_label: &fl!(I18N, "zero-rpm-stop-temp"),
-                                    set_size_group: &label_size_group,
-                                },
-
-                                #[template_child]
-                                scale {
-                                    set_adjustment: &model.pmfw_options.zero_rpm_temperature,
-                                },
-
-                                #[template_child]
-                                spinbutton {
-                                    set_adjustment: &model.pmfw_options.zero_rpm_temperature,
-                                    set_size_group: &spin_size_group,
-                                },
-                            },
-
-                            gtk::Button {
-                                set_label: &fl!(I18N, "reset-button"),
-                                set_halign: gtk::Align::End,
-                                set_margin_vertical: 5,
-                                set_tooltip_text: Some(&fl!(I18N, "pmfw-reset-warning")),
-                                add_css_class: "destructive-action",
+                            #[template_child]
+                            spinbutton {
+                                set_adjustment: &model.pmfw_options.target_temperature,
                                 set_size_group: &spin_size_group,
-                                #[watch]
-                                set_visible: !model.pmfw_options.is_empty(),
-                                connect_clicked => move |_| {
-                                    APP_BROKER.send(AppMsg::ResetPmfw);
-                                }
                             },
                         },
-                        add_titled[Some(CURVE_PAGE), &fl!(I18N, "curve-page")] = model.fan_curve_frame.widget(),
-                        add_titled[Some(STATIC_PAGE), &fl!(I18N, "static-page")] = &gtk::Box {
-                            set_valign: gtk::Align::Start,
-                            set_orientation: gtk::Orientation::Vertical,
+
+                        #[template]
+                        FanSettingRow {
+                            #[watch]
+                            set_visible: !adj_is_empty(&model.pmfw_options.acoustic_limit),
+
+                            #[template_child]
+                            label {
+                                set_label: &fl!(I18N, "acoustic-limit"),
+                                set_size_group: &label_size_group,
+                            },
+
+                            #[template_child]
+                            scale {
+                                set_adjustment: &model.pmfw_options.acoustic_limit,
+                            },
+
+                            #[template_child]
+                            spinbutton {
+                                set_adjustment: &model.pmfw_options.acoustic_limit,
+                                set_size_group: &spin_size_group,
+                            },
+                        },
+
+                        #[template]
+                        FanSettingRow {
+                            #[watch]
+                            set_visible: !adj_is_empty(&model.pmfw_options.acoustic_target),
+
+                            #[template_child]
+                            label {
+                                set_label: &fl!(I18N, "acoustic-target"),
+                                set_size_group: &label_size_group,
+                            },
+
+                            #[template_child]
+                            scale {
+                                set_adjustment: &model.pmfw_options.acoustic_target,
+                            },
+
+                            #[template_child]
+                            spinbutton {
+                                set_adjustment: &model.pmfw_options.acoustic_target,
+                                set_size_group: &spin_size_group,
+                            },
+                        },
+
+                        #[template]
+                        FanSettingRow {
+                            #[watch]
+                            set_visible: !adj_is_empty(&model.pmfw_options.minimum_pwm),
+
+                            #[template_child]
+                            label {
+                                set_label: &fl!(I18N, "min-fan-speed"),
+                                set_size_group: &label_size_group,
+                            },
+
+                            #[template_child]
+                            scale {
+                                set_adjustment: &model.pmfw_options.minimum_pwm,
+                            },
+
+                            #[template_child]
+                            spinbutton {
+                                set_adjustment: &model.pmfw_options.minimum_pwm,
+                                set_size_group: &spin_size_group,
+                            },
+                        },
+
+                        gtk::Box {
+                            set_orientation: gtk::Orientation::Horizontal,
                             set_spacing: 5,
+                            #[watch]
+                            set_visible: model.pmfw_options.zero_rpm_available.get(),
 
-                            #[template]
-                            #[name = "static_speed_row"]
-                            FanSettingRow {
-                                #[template_child]
-                                label {
-                                    set_label: &fl!(I18N, "static-speed"),
-                                },
+                            gtk::Label {
+                                set_label: &fl!(I18N, "zero-rpm"),
+                                set_xalign: 0.0,
+                                set_size_group: &label_size_group,
+                            },
 
-                                #[template_child]
-                                scale {
-                                    set_adjustment: &model.static_speed_adj,
-                                    connect_value_changed => move |_| {
-                                        APP_BROKER.send(AppMsg::SettingsChanged);
-                                    } @ static_speed_changed_signal,
-                                },
-
-                                #[template_child]
-                                spinbutton {
-                                    set_adjustment: &model.static_speed_adj,
-                                },
+                            gtk::Switch {
+                                bind: &model.pmfw_options.zero_rpm,
+                                set_hexpand: true,
+                                set_halign: gtk::Align::End,
                             },
                         },
 
-                        add_binding: (&model.selected_mode, "visible-child-name"),
-                        connect_visible_child_name_notify => move |_| {
-                            APP_BROKER.send(AppMsg::SettingsChanged);
-                        } @ mode_selected_signal,
+                        #[template]
+                        FanSettingRow {
+                            #[watch]
+                            set_visible: !adj_is_empty(&model.pmfw_options.zero_rpm_temperature),
+
+                            #[template_child]
+                            label {
+                                set_label: &fl!(I18N, "zero-rpm-stop-temp"),
+                                set_size_group: &label_size_group,
+                            },
+
+                            #[template_child]
+                            scale {
+                                set_adjustment: &model.pmfw_options.zero_rpm_temperature,
+                            },
+
+                            #[template_child]
+                            spinbutton {
+                                set_adjustment: &model.pmfw_options.zero_rpm_temperature,
+                                set_size_group: &spin_size_group,
+                            },
+                        },
+
+                        gtk::Button {
+                            set_label: &fl!(I18N, "reset-button"),
+                            set_halign: gtk::Align::End,
+                            set_margin_vertical: 5,
+                            set_tooltip_text: Some(&fl!(I18N, "pmfw-reset-warning")),
+                            add_css_class: "destructive-action",
+                            set_size_group: &spin_size_group,
+                            #[watch]
+                            set_visible: !model.pmfw_options.is_empty(),
+                            connect_clicked => move |_| {
+                                APP_BROKER.send(AppMsg::ResetPmfw);
+                            }
+                        },
                     },
-                },
+                    add_titled[Some(CURVE_PAGE), &fl!(I18N, "curve-page")] = model.fan_curve_frame.widget(),
+                    add_titled[Some(STATIC_PAGE), &fl!(I18N, "static-page")] = &gtk::Box {
+                        set_valign: gtk::Align::Start,
+                        set_orientation: gtk::Orientation::Vertical,
+                        set_spacing: 5,
+
+                        #[template]
+                        #[name = "static_speed_row"]
+                        FanSettingRow {
+                            #[template_child]
+                            label {
+                                set_label: &fl!(I18N, "static-speed"),
+                            },
+
+                            #[template_child]
+                            scale {
+                                set_adjustment: &model.static_speed_adj,
+                                connect_value_changed => move |_| {
+                                    APP_BROKER.send(AppMsg::SettingsChanged);
+                                } @ static_speed_changed_signal,
+                            },
+
+                            #[template_child]
+                            spinbutton {
+                                set_adjustment: &model.static_speed_adj,
+                            },
+                        },
+                    },
+
+                    add_binding: (&model.selected_mode, "visible-child-name"),
+                    connect_visible_child_name_notify => move |_| {
+                        APP_BROKER.send(AppMsg::SettingsChanged);
+                    } @ mode_selected_signal,
+                }
             }
-        }
+        },
     }
 
     fn init(
@@ -409,27 +422,9 @@ impl relm4::Component for ThermalsPage {
                     self.has_auto_threshold = info.flags.contains(&DeviceFlag::AutoFanThreshold);
                 }
                 PageUpdate::Stats(stats) => {
-                    let fan_percent = stats
-                        .fan
-                        .pwm_current
-                        .map(|current_pwm| ((current_pwm as f64 / u8::MAX as f64) * 100.0).round());
-                    let fan_text = if let Some(current_rpm) = stats.fan.speed_current {
-                        let text = match fan_percent {
-                            Some(percent) => format!(
-                                "<b>{} RPM ({}%)</b>",
-                                Mono::uint(current_rpm),
-                                Mono::uint(percent as u32)
-                            ),
-                            None => format!("<b>{} RPM</b>", Mono::uint(current_rpm)),
-                        };
-                        Some(text)
-                    } else {
-                        fan_percent.map(|percent| format!("<b>{}%</b>", Mono::uint(percent as u32)))
-                    };
-
-                    self.fan_speed = fan_text;
-                    self.temperatures = temperature_text(&stats);
-                    self.throttling = throttling_text(&stats);
+                    self.fan_speed = fmt_fan_speed(&stats, true);
+                    self.temperatures = fmt_temperature_text(&stats);
+                    self.throttling = fmt_throttling_text(&stats);
 
                     if initial {
                         let page_name = match stats.fan.control_mode {

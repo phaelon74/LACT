@@ -20,9 +20,12 @@ serde_json = "1.0.111"
 anyhow = "1.0.79"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-futures = { version = "0.3.30", features = ["std"], default-features = false }
+futures = { version = "0.3.30", features = [
+    "std",
+    "async-await",
+], default-features = false }
 tokio = { version = "1.35.1", default-features = false }
-nix = { version = "0.30.1", default-features = false }
+nix = { version = "0.31.1", default-features = false }
 chrono = "0.4.31"
 indexmap = { version = "2.5.0", features = ["serde"] }
 pretty_assertions = "1.4.0"
@@ -55,8 +58,3 @@ strip = false
 debug = 1
 lto = "thin"
 codegen-units = 256
-
-# fuser contains memory safety issues which trigger leaks and UB inside libfuse.so
-# It's used only as dev dependency in the test code, so this is okay.
-[patch.crates-io]
-fuser = { git = "https://github.com/cberner/fuser.git", rev = "47113e10ea4ab4be5b562cdc0d8cc8d41ce50311" }

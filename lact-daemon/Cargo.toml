@@ -1,7 +1,7 @@
 [package]
 name = "lact-daemon"
-version = "0.8.2"
-edition = "2021"
+version = "0.8.5"
+edition = "2024"
 
 [features]
 default = ["nvidia"]
@@ -18,7 +18,7 @@ serde = { workspace = true, features = ["rc"] }
 serde_with = { workspace = true }
 serde_json = { workspace = true }
 tracing-subscriber = { workspace = true }
-nix = { workspace = true, features = ["user", "fs", "ioctl"] }
+nix = { workspace = true, features = ["user", "fs", "ioctl", "socket"] }
 chrono = { workspace = true }
 tokio = { workspace = true, features = [
     "rt",
@@ -33,7 +33,7 @@ indexmap = { workspace = true }
 divan = { workspace = true, optional = true }
 serde_norway = { workspace = true }
 
-nvml-wrapper = "0.11.0"
+nvml-wrapper = "0.12.0"
 bitflags = "2.6.0"
 pciid-parser = { version = "0.8", features = ["serde"] }
 zbus = { version = "5.3.1", default-features = false, features = ["tokio"] }
@@ -45,17 +45,16 @@ libflate = "2.0.0"
 os-release = "0.1.0"
 notify = { version = "8.0.0", default-features = false }
 libcopes = "1.0.0"
-libloading = "0.8.6"
-cl3 = { git = "https://github.com/kenba/cl3", branch = "develop", features = [
-    "static",
-] }
+libloading = "0.8.6" # Can be updated when https://github.com/rust-lang/rust-bindgen/issues/3332 is released
+
+ureq = { version = "3.1.2", features = ["json", "rustls"] }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }
 insta = { version = "1.41.1", features = ["json", "yaml"] }
-easy_fuser = { version = "0.4.1", features = ["parallel"] }
+easy_fuser = { version = "0.4.2", features = ["parallel"] }
 tempfile = "3.17.1"
 
 [build-dependencies]
-bindgen = "0.71"
+bindgen = "0.72"
 serde_json = { workspace = true }

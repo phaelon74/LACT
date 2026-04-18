@@ -1,76 +1,86 @@
-mod apply_revealer;
 mod confirmation_dialog;
 mod ext;
-mod formatting;
+pub(crate) mod formatting;
+mod gpu_selector;
 pub mod graphs_window;
-mod header;
 mod info_row;
-mod msg;
+mod info_row_level;
+pub(crate) mod msg;
 mod overdrive_dialog;
 mod page_section;
-mod pages;
+mod page_section_expander;
+pub(crate) mod pages;
 mod process_monitor;
+mod profiles;
+pub(crate) mod styles;
 
 use crate::{
+    APP_ID, CONFIG, GUI_VERSION, I18N,
     app::{
+        gpu_selector::GpuSelector,
         overdrive_dialog::{OverdriveDialog, OverdriveDialogMsg},
         process_monitor::{ProcessMonitorWindow, ProcessMonitorWindowMsg},
+        profiles::{
+            ProfileSelector, ProfileSelectorMsg,
+            profile_rule_window::{ProfileRuleWindowMsg, profile_rule_row::ProfileRuleRowMsg},
+        },
+        styles::AppTheme,
     },
-    APP_ID, CONFIG, GUI_VERSION, I18N,
+    config::{MAX_STATS_POLL_INTERVAL_MS, MIN_STATS_POLL_INTERVAL_MS},
 };
-use anyhow::{anyhow, Context};
-use apply_revealer::{ApplyRevealer, ApplyRevealerMsg};
+use adw::prelude::{AdwDialogExt as _, AlertDialogExtManual as _, NavigationPageExt as _};
+use adw::{ApplicationWindow, prelude::AlertDialogExt};
+use anyhow::{Context, anyhow};
 use confirmation_dialog::ConfirmationDialog;
 use ext::RelmDefaultLauchable;
 use graphs_window::{GraphsWindow, GraphsWindowMsg};
 use gtk::{
-    glib::{self, clone, ControlFlow},
+    ButtonsType, FileChooserAction, FileChooserDialog, MessageDialog, MessageType, ResponseType,
+    STYLE_PROVIDER_PRIORITY_APPLICATION,
+    glib::{self, ControlFlow, clone},
     prelude::{
         BoxExt, ButtonExt, Cast, DialogExtManual, FileChooserExt, FileExt, GtkWindowExt,
-        OrientableExt, WidgetExt,
+        OrientableExt, ToggleButtonExt as _, WidgetExt,
     },
-    ApplicationWindow, ButtonsType, FileChooserAction, FileChooserDialog, MessageDialog,
-    MessageType, ResponseType,
-};
-use header::{
-    profile_rule_window::{profile_row::ProfileRuleRowMsg, ProfileRuleWindowMsg},
-    Header, HeaderMsg,
 };
 use i18n_embed_fl::fl;
 use lact_client::{ConnectionStatusMsg, DaemonClient};
 use lact_schema::{
+    DeviceFlag, DeviceStats, GIT_COMMIT, SystemInfo,
     args::GuiArgs,
     config::{GpuConfig, Profile},
     request::{ConfirmCommand, ProfileBase, SetClocksCommand},
-    DeviceStats, GIT_COMMIT,
 };
 use msg::AppMsg;
 use pages::{
+    PageUpdate,
+    crash_page::CrashPage,
     info_page::InformationPage,
     oc_page::{OcPage, OcPageMsg},
     software_page::{SoftwarePage, SoftwarePageMsg},
     thermals_page::{ThermalsPage, ThermalsPageMsg},
-    PageUpdate,
 };
 use relm4::{
-    binding::BoolBinding,
-    prelude::{AsyncComponent, AsyncComponentParts},
-    tokio::{self, time::sleep},
     AsyncComponentSender, Component, ComponentController, MessageBroker, RelmObjectExt,
     RelmWidgetExt,
+    binding::BoolBinding,
+    css,
+    prelude::{AsyncComponent, AsyncComponentParts},
+    tokio::{self, time::sleep},
 };
 use relm4_components::{
     open_dialog::{OpenDialog, OpenDialogMsg, OpenDialogResponse, OpenDialogSettings},
     save_dialog::{SaveDialog, SaveDialogMsg, SaveDialogResponse, SaveDialogSettings},
 };
 use std::{
+    cell::Cell,
     fs,
     os::unix::net::UnixStream,
     path::PathBuf,
     rc::Rc,
     sync::{
-        atomic::{AtomicBool, AtomicU32, Ordering},
         Arc,
+        atomic::{AtomicU32, Ordering},
     },
     time::Duration,
 };
@@ -81,6 +91,10 @@ static ERROR_WINDOW_COUNT: AtomicU32 = AtomicU32::new(0);
 
 const PROCESS_POLL_INTERVAL_MS: u64 = 1500;
 const NVIDIA_RECOMMENDED_MIN_VERSION: u32 = 560;
+const CONTENT_MAXIMUM_WIDTH: i32 = 1200;
+
+const CONFIRM_RESPONSE_APPLY: &str = "confirm";
+const CONFIRM_RESPONSE_REVERT: &str = "revert";
 
 pub struct AppModel {
     daemon_client: DaemonClient,
@@ -89,15 +103,22 @@ pub struct AppModel {
     overdrive_dialog: relm4::Controller<OverdriveDialog>,
 
     ui_sensitive: BoolBinding,
+    selected_gpu_index: u32,
 
     info_page: relm4::Controller<InformationPage>,
     oc_page: relm4::Controller<OcPage>,
     thermals_page: relm4::Controller<ThermalsPage>,
     software_page: relm4::Controller<SoftwarePage>,
+    crash_page: relm4::Controller<CrashPage>,
 
-    header: relm4::Controller<Header>,
-    apply_revealer: relm4::Controller<ApplyRevealer>,
+    gpu_selector: relm4::Controller<GpuSelector>,
+    profile_selector: relm4::Controller<ProfileSelector>,
     stats_task_handle: Option<glib::JoinHandle<()>>,
+
+    settings_changed: BoolBinding,
+
+    system_info: SystemInfo,
+    device_flags: Vec<DeviceFlag>,
 }
 
 #[derive(Debug)]
@@ -116,33 +137,296 @@ impl AsyncComponent for AppModel {
 
     view! {
         #[root]
-        gtk::ApplicationWindow::builder()
-            .titlebar(&gtk::HeaderBar::new())
-            .default_height(850)
+        adw::ApplicationWindow::builder()
+            .default_height(750)
+            .default_width(1000)
             .icon_name(APP_ID)
             .title("LACT")
             .build() {
                 #[name = "root_box"]
                 gtk::Box {
                     set_orientation: gtk::Orientation::Vertical,
-                    set_spacing: 5,
 
-                    #[name = "root_stack"]
-                    gtk::Stack {
-                        set_vexpand: true,
-                        set_margin_top: 15,
-                        set_margin_start: 30,
-                        set_margin_end: 30,
+                    #[name = "navbar"]
+                    adw::NavigationSplitView {
+                        set_expand: true,
+                        set_max_sidebar_width: 230.0,
 
-                        add_binding: (&model.ui_sensitive, "sensitive"),
+                        #[wrap(Some)]
+                        set_sidebar = &adw::NavigationPage {
+                            set_title: "LACT",
 
-                        add_titled[Some("info_page"), &fl!(I18N, "info-page")] = model.info_page.widget(),
-                        add_titled[Some("oc_page"), &fl!(I18N, "oc-page")] = model.oc_page.widget(),
-                        add_titled[Some("thermals_page"), &fl!(I18N, "thermals-page")] = model.thermals_page.widget(),
-                        add_titled[Some("software_page"), &fl!(I18N, "software-page")] = model.software_page.widget(),
+                            #[wrap(Some)]
+                            set_child = &adw::ToolbarView {
+                                add_top_bar = &adw::HeaderBar {
+                                    set_show_end_title_buttons: false,
+                                },
+
+                                #[wrap(Some)]
+                                set_content = &gtk::Box {
+                                    set_orientation: gtk::Orientation::Vertical,
+                                    set_vexpand: true,
+
+                                    gtk::Box {
+                                        set_orientation: gtk::Orientation::Vertical,
+                                        set_margin_horizontal: 8,
+                                        set_margin_top: 4,
+                                        set_margin_bottom: 8,
+
+                                        gtk::Label {
+                                            set_label: "GPU",
+                                            set_halign: gtk::Align::Start,
+                                            set_margin_horizontal: 4,
+                                            add_css_class: relm4::css::DIM_LABEL,
+                                            add_css_class: relm4::css::CAPTION,
+                                        },
+
+                                        model.gpu_selector.widget().clone() {},
+                                    },
+
+                                    gtk::Box {
+                                        set_orientation: gtk::Orientation::Vertical,
+                                        set_margin_horizontal: 8,
+                                        set_margin_top: 4,
+                                        set_margin_bottom: 8,
+
+                                        gtk::Label {
+                                            set_label: "Profile",
+                                            set_halign: gtk::Align::Start,
+                                            set_margin_horizontal: 4,
+                                            add_css_class: relm4::css::DIM_LABEL,
+                                            add_css_class: relm4::css::CAPTION,
+                                        },
+
+                                        model.profile_selector.widget().clone() {},
+                                    },
+
+                                    gtk::Separator {},
+
+                                    gtk::StackSidebar {
+                                        set_margin_vertical: 1,
+                                        set_stack: &root_stack,
+                                        set_vexpand: true,
+                                    },
+
+                                    gtk::Separator {},
+
+                                    gtk::Box {
+                                        set_orientation: gtk::Orientation::Vertical,
+                                        set_spacing: 6,
+                                        set_margin_all: 8,
+                                        add_binding: (&model.settings_changed, "sensitive"),
+
+                                        gtk::Button {
+                                            set_label: &fl!(I18N, "apply-button"),
+                                            add_css_class: css::SUGGESTED_ACTION,
+                                            set_width_request: 150,
+                                            connect_clicked[sender] => move |_| {
+                                                sender.input(AppMsg::ApplyChanges);
+                                            },
+                                        },
+
+                                        gtk::Button {
+                                            set_label: &fl!(I18N, "revert-button"),
+                                            connect_clicked[sender] => move |_| {
+                                                sender.input(AppMsg::RevertChanges);
+                                            },
+                                        }
+                                    }
+                                },
+                            },
+                        },
+
+                        #[wrap(Some)]
+                        set_content = &adw::NavigationPage {
+                            set_title: "LACT",
+
+                            #[wrap(Some)]
+                            set_child = &adw::ToolbarView {
+                                add_top_bar = &adw::HeaderBar {
+                                    set_show_title: false,
+
+                                    pack_end = &gtk::MenuButton {
+                                        set_icon_name: "open-menu-symbolic",
+
+                                        #[wrap(Some)]
+                                        set_popover = &gtk::Popover {
+
+                                            gtk::Box {
+                                                set_orientation: gtk::Orientation::Vertical,
+                                                add_css_class: "header-settings-popover-container",
+
+                                                gtk::Button {
+                                                    set_label: &fl!(I18N, "show-historical-charts"),
+                                                    connect_clicked => move |_| APP_BROKER.send(AppMsg::ShowGraphsWindow),
+                                                    add_css_class: "flat",
+                                                },
+
+                                                gtk::Button {
+                                                    set_label: &fl!(I18N, "show-process-monitor"),
+                                                    connect_clicked => move |_| APP_BROKER.send(AppMsg::ShowProcessMonitor),
+                                                    add_css_class: "flat",
+                                                },
+
+                                                gtk::Separator {},
+
+                                                gtk::Button {
+                                                    set_label: &fl!(I18N, "generate-debug-snapshot"),
+                                                    connect_clicked => move |_| APP_BROKER.send(AppMsg::DebugSnapshot),
+                                                    add_css_class: "flat",
+                                                },
+
+                                                gtk::Button {
+                                                    set_label: &fl!(I18N, "dump-vbios"),
+                                                    connect_clicked => move |_| APP_BROKER.send(AppMsg::DumpVBios),
+                                                    add_css_class: "flat",
+                                                    #[watch]
+                                                    set_sensitive: model.device_flags.contains(&DeviceFlag::DumpableVBios),
+                                                },
+
+                                                gtk::Separator {},
+
+                                                gtk::Button {
+                                                    set_label: &fl!(I18N, "disable-amd-oc"),
+                                                    connect_clicked => move |_| APP_BROKER.send(AppMsg::ShowOverdriveDialog),
+                                                    add_css_class: "flat",
+                                                    #[watch]
+                                                    set_sensitive: model.system_info.amdgpu_overdrive_enabled.is_some(),
+                                                },
+
+                                                gtk::Button {
+                                                    set_label: &fl!(I18N, "reset-all-config"),
+                                                    connect_clicked => move |_| {
+                                                        let msg = AppMsg::ask_confirmation(
+                                                            AppMsg::ResetConfig,
+                                                            fl!(I18N, "reset-config"),
+                                                            fl!(I18N, "reset-config-description"),
+                                                            gtk::ButtonsType::YesNo,
+                                                        );
+                                                        APP_BROKER.send(msg);
+                                                    },
+                                                    add_css_class: "flat",
+                                                },
+
+                                                gtk::Separator {},
+
+                                                gtk::Box {
+                                                    set_orientation: gtk::Orientation::Horizontal,
+                                                    set_spacing: 5,
+                                                    set_halign: gtk::Align::Center,
+
+                                                    gtk::Label {
+                                                        set_markup: &format!("<b>{}</b>", &fl!(I18N, "stats-update-interval")),
+                                                    },
+
+                                                    gtk::SpinButton {
+                                                        set_range: (MIN_STATS_POLL_INTERVAL_MS as f64, MAX_STATS_POLL_INTERVAL_MS as f64),
+                                                        set_increments: (250.0, 500.0),
+                                                        set_digits: 0,
+                                                        set_value: CONFIG.read().stats_poll_interval_ms as f64,
+                                                        connect_value_changed => move |btn| {
+                                                            CONFIG.write().edit(|config| {
+                                                                config.stats_poll_interval_ms = btn.value() as i64;
+                                                            })
+                                                        }
+                                                    },
+                                                },
+
+                                                gtk::Separator {},
+
+                                                gtk::Box {
+                                                    set_orientation: gtk::Orientation::Horizontal,
+                                                    set_spacing: 5,
+                                                    set_halign: gtk::Align::Center,
+
+                                                    gtk::Label {
+                                                        set_markup: &format!("<b>{}</b>", &fl!(I18N, "theme")),
+                                                    },
+
+                                                    gtk::Box {
+                                                        set_orientation: gtk::Orientation::Horizontal,
+                                                        add_css_class: "linked",
+
+                                                        #[name = "theme_auto_btn"]
+                                                        gtk::ToggleButton {
+                                                            set_label: &fl!(I18N, "theme-auto"),
+                                                            #[watch]
+                                                            set_active: CONFIG.read().theme == AppTheme::Automatic,
+                                                            connect_toggled[sender] => move |btn| {
+                                                                if btn.is_active() {
+                                                                    sender.input(AppMsg::ThemeSelected(AppTheme::Automatic));
+                                                                }
+                                                            },
+                                                        },
+
+                                                        gtk::ToggleButton {
+                                                            set_label: "Adwaita",
+                                                            set_group: Some(&theme_auto_btn),
+                                                            #[watch]
+                                                            set_active: CONFIG.read().theme == AppTheme::Adwaita,
+                                                            connect_toggled[sender] => move |btn| {
+                                                                if btn.is_active() {
+                                                                    sender.input(AppMsg::ThemeSelected(AppTheme::Adwaita));
+                                                                }
+                                                            },
+                                                        },
+
+                                                        gtk::ToggleButton {
+                                                            set_label: "Breeze",
+                                                            set_group: Some(&theme_auto_btn),
+                                                            #[watch]
+                                                            set_active: CONFIG.read().theme == AppTheme::Breeze,
+                                                            connect_toggled[sender] => move |btn| {
+                                                                if btn.is_active() {
+                                                                    sender.input(AppMsg::ThemeSelected(AppTheme::Breeze));
+                                                                }
+                                                            },
+                                                        },
+                                                    },
+                                                },
+                                            }
+                                        },
+                                    }
+                                },
+
+                                #[wrap(Some)]
+                                set_content = &adw::Clamp {
+                                    set_maximum_size: CONTENT_MAXIMUM_WIDTH,
+
+                                    #[wrap(Some)]
+                                    set_child = &gtk::ScrolledWindow {
+                                        set_hscrollbar_policy: gtk::PolicyType::Never,
+
+                                        #[name = "root_stack"]
+                                        gtk::Stack {
+                                            set_vexpand: false,
+                                            set_vhomogeneous: false,
+
+                                            add_binding: (&model.ui_sensitive, "sensitive"),
+
+                                            add_titled[Some("info_page"), &fl!(I18N, "info-page")] = model.info_page.widget(),
+                                            add_titled[Some("oc_page"), &fl!(I18N, "oc-page")] = model.oc_page.widget(),
+                                            add_titled[Some("thermals_page"), &fl!(I18N, "thermals-page")] = model.thermals_page.widget(),
+                                            add_titled[Some("software_page"), &fl!(I18N, "software-page")] = model.software_page.widget(),
+                                            add_named[Some("crash_page")] = model.crash_page.widget(),
+
+                                            set_visible_child_name: &CONFIG.read().selected_tab,
+                                            connect_visible_child_name_notify => move |stack| {
+                                                if let Some(name) = stack.visible_child_name() {
+                                                    let name = name.to_string();
+                                                    if name != "crash_page" {
+                                                        CONFIG.write().edit(|config| {
+                                                            config.selected_tab = name;
+                                                        });
+                                                    }
+                                                }
+                                            },
+                                        }
+                                    }
+                                },
+                            }
+                        }
                     },
-
-                    model.apply_revealer.widget(),
                 }
             },
 
@@ -169,6 +453,15 @@ impl AsyncComponent for AppModel {
         root: Self::Root,
         sender: AsyncComponentSender<Self>,
     ) -> AsyncComponentParts<Self> {
+        relm4::set_global_css_with_priority(
+            styles::COMBINED_CSS,
+            STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+
+        if let Err(err) = styles::apply_theme(CONFIG.read().theme) {
+            error!("could not apply theme: {err:#}");
+        }
+
         let (daemon_client, conn_err) = match args.tcp_address {
             Some(remote_addr) => {
                 info!("establishing connection to {remote_addr}");
@@ -212,7 +505,11 @@ impl AsyncComponent for AppModel {
             .expect("Could not list devices");
 
         if system_info.version != GUI_VERSION || system_info.commit.as_deref() != Some(GIT_COMMIT) {
-            let err = anyhow!("Version mismatch between GUI and daemon ({GUI_VERSION}-{GIT_COMMIT} vs {}-{})! If you have updated LACT, you need to restart the service with `sudo systemctl restart lactd`.", system_info.version, system_info.commit.as_deref().unwrap_or_default());
+            let err = anyhow!(
+                "Version mismatch between GUI and daemon ({GUI_VERSION}-{GIT_COMMIT} vs {}-{})! If you have updated LACT, you need to restart the service with `sudo systemctl restart lactd`.",
+                system_info.version,
+                system_info.commit.as_deref().unwrap_or_default()
+            );
             sender.input(AppMsg::Error(err.into()));
         }
 
@@ -227,6 +524,10 @@ impl AsyncComponent for AppModel {
             .launch((system_info.clone(), daemon_client.embedded))
             .detach();
 
+        let crash_page = CrashPage::builder()
+            .launch(String::new())
+            .forward(sender.input_sender(), |msg| msg);
+
         let overdrive_dialog = OverdriveDialog::builder()
             .transient_for(&root)
             .launch(OverdriveDialog {
@@ -236,23 +537,18 @@ impl AsyncComponent for AppModel {
             })
             .detach();
 
-        let header = Header::builder()
-            .update_root(|headerbar| {
-                *headerbar = root
-                    .titlebar()
-                    .unwrap()
-                    .downcast::<gtk::HeaderBar>()
-                    .unwrap();
-            })
-            .launch((devices, system_info))
-            .forward(sender.input_sender(), |msg| msg);
-
-        let apply_revealer = ApplyRevealer::builder()
-            .launch(())
-            .forward(sender.input_sender(), |msg| msg);
-
         let graphs_window = GraphsWindow::detach_default();
         let process_monitor_window = ProcessMonitorWindow::detach_default();
+
+        let gpu_selector = GpuSelector::builder()
+            .launch(devices)
+            .forward(sender.input_sender(), |gpu_idx| {
+                AppMsg::GpuSelected(gpu_idx)
+            });
+
+        let profile_selector = ProfileSelector::builder()
+            .launch(())
+            .forward(sender.input_sender(), |msg| msg);
 
         let model = AppModel {
             daemon_client,
@@ -263,10 +559,15 @@ impl AsyncComponent for AppModel {
             oc_page,
             thermals_page,
             software_page,
-            apply_revealer,
+            crash_page,
+            gpu_selector,
+            profile_selector,
             ui_sensitive: BoolBinding::new(false),
-            header,
+            selected_gpu_index: 0,
             stats_task_handle: None,
+            settings_changed: BoolBinding::new(false),
+            system_info,
+            device_flags: vec![],
         };
 
         let widgets = view_output!();
@@ -274,12 +575,6 @@ impl AsyncComponent for AppModel {
         if let Some(err) = conn_err {
             show_embedded_info(&root, err);
         }
-
-        model
-            .header
-            .widgets()
-            .stack_switcher
-            .set_stack(Some(&widgets.root_stack));
 
         sender.input(AppMsg::ReloadProfiles { state_sender: None });
 
@@ -318,10 +613,10 @@ impl AsyncComponent for AppModel {
         sender: AsyncComponentSender<Self>,
         _root: &Self::Root,
     ) {
-        if let Some(msg) = msg {
-            if let Err(err) = self.handle_cmd_output(msg, &sender).await {
-                sender.input(AppMsg::Error(Arc::new(err)));
-            }
+        if let Some(msg) = msg
+            && let Err(err) = self.handle_cmd_output(msg, &sender).await
+        {
+            sender.input(AppMsg::Error(Arc::new(err)));
         }
     }
 }
@@ -331,23 +626,24 @@ impl AppModel {
         &mut self,
         msg: AppMsg,
         sender: AsyncComponentSender<Self>,
-        root: &gtk::ApplicationWindow,
+        root: &adw::ApplicationWindow,
         widgets: &AppModelWidgets,
     ) -> Result<(), Arc<anyhow::Error>> {
         match msg {
             AppMsg::Error(err) => return Err(err),
             AppMsg::SettingsChanged => {
-                self.apply_revealer.emit(ApplyRevealerMsg::Show);
+                self.settings_changed.set_value(true);
             }
             AppMsg::ReloadProfiles { state_sender } => {
                 self.reload_profiles(state_sender).await?;
                 sender.input(AppMsg::ReloadData { full: false });
             }
+            AppMsg::GpuSelected(idx) => {
+                self.selected_gpu_index = idx;
+                sender.input(AppMsg::ReloadData { full: true });
+            }
             AppMsg::ReloadData { full } => {
-                self.apply_revealer
-                    .sender()
-                    .send(ApplyRevealerMsg::Hide)
-                    .unwrap();
+                self.settings_changed.set_value(false);
 
                 let gpu_id = self.current_gpu_id()?;
                 if full {
@@ -371,7 +667,7 @@ impl AppModel {
                     .create_profile(name.clone(), base)
                     .await?;
 
-                let auto_switch = self.header.model().auto_switch_profiles();
+                let auto_switch = self.profile_selector.model().auto_switch_profiles();
                 self.daemon_client
                     .set_profile(Some(name), auto_switch)
                     .await?;
@@ -529,16 +825,16 @@ impl AppModel {
                 sender.input(AppMsg::ReloadData { full: true });
             }
             AppMsg::FetchProcessList => {
-                if self.process_monitor_window.widget().is_visible() {
-                    if let Ok(gpu_id) = self.current_gpu_id() {
-                        match self.daemon_client.get_process_list(&gpu_id).await {
-                            Ok(process_list) => {
-                                self.process_monitor_window
-                                    .emit(ProcessMonitorWindowMsg::Data(process_list));
-                            }
-                            Err(err) => {
-                                warn!("could not fetch process list: {err:#}");
-                            }
+                if self.process_monitor_window.widget().is_visible()
+                    && let Ok(gpu_id) = self.current_gpu_id()
+                {
+                    match self.daemon_client.get_process_list(&gpu_id).await {
+                        Ok(process_list) => {
+                            self.process_monitor_window
+                                .emit(ProcessMonitorWindowMsg::Data(process_list));
+                        }
+                        Err(err) => {
+                            warn!("could not fetch process list: {err:#}");
                         }
                     }
                 }
@@ -574,6 +870,28 @@ impl AppModel {
                     .set_profile_rule(name, rule, hooks)
                     .await?;
                 self.reload_profiles(None).await?;
+            }
+            AppMsg::ThemeSelected(theme) => {
+                styles::apply_theme(theme).expect("Could not apply theme");
+
+                CONFIG.write().edit(|config| {
+                    config.theme = theme;
+                });
+            }
+            AppMsg::Crash(message) => {
+                // we cannot be sure that the application is fully functional after a crash
+                // even though the main loop is restored via crash handler, we want user to restart
+                // this is why navbar is disabled
+                widgets.navbar.set_sensitive(false);
+                self.settings_changed.set_value(false);
+
+                self.ui_sensitive.set_value(true);
+                widgets.root_stack.set_visible_child_name("crash_page");
+                self.crash_page.emit(message);
+
+                if let Some(handle) = self.stats_task_handle.take() {
+                    handle.abort();
+                }
             }
         }
         Ok(())
@@ -612,9 +930,10 @@ impl AppModel {
     }
 
     fn current_gpu_id(&self) -> anyhow::Result<String> {
-        self.header
-            .model()
-            .selected_gpu_id()
+        CONFIG
+            .read()
+            .selected_gpu
+            .clone()
             .context("No GPU selected")
     }
 
@@ -627,13 +946,14 @@ impl AppModel {
             .list_profiles(state_sender.is_some())
             .await?;
 
-        if let Some(sender) = state_sender {
-            if let Some(state) = profiles.watcher_state.take() {
-                let _ = sender.send(ProfileRuleRowMsg::WatcherState(state));
-            }
+        if let Some(sender) = state_sender
+            && let Some(state) = profiles.watcher_state.take()
+        {
+            let _ = sender.send(ProfileRuleRowMsg::WatcherState(state));
         }
 
-        self.header.emit(HeaderMsg::Profiles(Box::new(profiles)));
+        self.profile_selector
+            .emit(ProfileSelectorMsg::Profiles(Box::new(profiles)));
 
         Ok(())
     }
@@ -655,17 +975,17 @@ impl AppModel {
         // Plain `nvidia` means that the nvidia driver is loaded, but it does not contain a version fetched from NVML
         if info.driver == "nvidia" {
             sender.input(AppMsg::Error(Arc::new(anyhow!("Nvidia driver detected, but the management library could not be loaded. Check lact service status for more information."))));
-        } else if let Some(nvidia_version) = info.driver.strip_prefix("nvidia ") {
-            if let Some(major_version) = nvidia_version
+        } else if let Some(nvidia_version) = info.driver.strip_prefix("nvidia ")
+            && let Some(major_version) = nvidia_version
                 .split('.')
                 .next()
                 .and_then(|version| version.parse::<u32>().ok())
-            {
-                if major_version < NVIDIA_RECOMMENDED_MIN_VERSION {
-                    sender.input(AppMsg::Error(Arc::new(anyhow!("Old Nvidia driver version detected ({major_version}), some features might be missing. Driver version {NVIDIA_RECOMMENDED_MIN_VERSION} or newer is recommended."))));
-                }
-            }
+            && major_version < NVIDIA_RECOMMENDED_MIN_VERSION
+        {
+            sender.input(AppMsg::Error(Arc::new(anyhow!("Old Nvidia driver version detected ({major_version}), some features might be missing. Driver version {NVIDIA_RECOMMENDED_MIN_VERSION} or newer is recommended."))));
         }
+
+        self.device_flags = info.flags.clone();
 
         let update = PageUpdate::Info(info.clone());
         self.info_page.emit(update.clone());
@@ -675,7 +995,6 @@ impl AppModel {
         });
         self.software_page
             .emit(SoftwarePageMsg::DeviceInfo(info.clone()));
-        self.header.emit(HeaderMsg::DeviceInfo(info.clone()));
         self.thermals_page.emit(ThermalsPageMsg::Update {
             update: update.clone(),
             initial: true,
@@ -775,7 +1094,7 @@ impl AppModel {
             gpu_id.to_owned(),
             self.daemon_client.clone(),
             sender,
-            self.header.sender().clone(),
+            self.profile_selector.sender().clone(),
         ));
 
         Ok(stats)
@@ -784,7 +1103,7 @@ impl AppModel {
     async fn apply_settings(
         &self,
         gpu_id: String,
-        root: &gtk::ApplicationWindow,
+        root: &adw::ApplicationWindow,
         sender: &AsyncComponentSender<Self>,
     ) -> anyhow::Result<()> {
         debug!("applying settings on gpu {gpu_id}");
@@ -840,18 +1159,24 @@ impl AppModel {
     async fn ask_settings_confirmation(
         &self,
         mut delay: u64,
-        window: &gtk::ApplicationWindow,
+        window: &adw::ApplicationWindow,
         sender: &AsyncComponentSender<AppModel>,
     ) {
         let text = confirmation_text(delay);
-        let dialog = MessageDialog::builder()
+        let dialog = adw::AlertDialog::builder()
             .title("Confirm settings")
-            .text(text)
-            .message_type(MessageType::Question)
-            .buttons(ButtonsType::YesNo)
-            .transient_for(window)
+            .body(text)
+            .default_response(CONFIRM_RESPONSE_REVERT)
+            .close_response(CONFIRM_RESPONSE_REVERT)
             .build();
-        let confirmed = Rc::new(AtomicBool::new(false));
+
+        dialog.add_responses(&[
+            (CONFIRM_RESPONSE_REVERT, "Revert"),
+            (CONFIRM_RESPONSE_APPLY, "Confirm"),
+        ]);
+        dialog.set_response_appearance(CONFIRM_RESPONSE_APPLY, adw::ResponseAppearance::Suggested);
+
+        let is_cancelled = Rc::new(Cell::new(false));
 
         glib::source::timeout_add_local(
             Duration::from_secs(1),
@@ -859,22 +1184,16 @@ impl AppModel {
                 #[strong]
                 dialog,
                 #[strong]
-                sender,
-                #[strong]
-                confirmed,
+                is_cancelled,
                 move || {
-                    if confirmed.load(std::sync::atomic::Ordering::SeqCst) {
-                        return ControlFlow::Break;
-                    }
                     delay -= 1;
 
                     let text = confirmation_text(delay);
-                    dialog.set_text(Some(&text));
+                    dialog.set_body(&text);
 
                     if delay == 0 {
-                        dialog.hide();
-                        sender.input(AppMsg::ReloadData { full: false });
-
+                        is_cancelled.set(true);
+                        dialog.force_close();
                         ControlFlow::Break
                     } else {
                         ControlFlow::Continue
@@ -883,34 +1202,32 @@ impl AppModel {
             ),
         );
 
-        dialog.run_async(clone!(
+        relm4::spawn_local(clone!(
             #[strong]
             sender,
             #[strong(rename_to = daemon_client)]
             self.daemon_client,
             #[strong]
             window,
-            move |diag, response| {
-                confirmed.store(true, std::sync::atomic::Ordering::SeqCst);
+            async move {
+                let response = dialog.choose_future(Some(&window)).await;
 
-                let command = match response {
-                    ResponseType::Yes => ConfirmCommand::Confirm,
-                    _ => ConfirmCommand::Revert,
-                };
+                if !is_cancelled.get() {
+                    let command = match response.as_str() {
+                        CONFIRM_RESPONSE_APPLY => ConfirmCommand::Confirm,
+                        _ => ConfirmCommand::Revert,
+                    };
 
-                diag.close();
-
-                relm4::spawn_local(async move {
                     if let Err(err) = daemon_client.confirm_pending_config(command).await {
                         show_error(&window, &err);
                     }
-                    sender.input(AppMsg::ReloadData { full: false });
-                });
+                }
+                sender.input(AppMsg::ReloadData { full: false });
             }
         ));
     }
 
-    async fn dump_vbios(&self, gpu_id: &str, root: &gtk::ApplicationWindow) {
+    async fn dump_vbios(&self, gpu_id: &str, root: &adw::ApplicationWindow) {
         match self.daemon_client.dump_vbios(gpu_id).await {
             Ok(vbios_data) => {
                 let file_chooser = FileChooserDialog::new(
@@ -934,20 +1251,19 @@ impl AppModel {
                     move |diag, response| {
                         diag.close();
 
-                        if response == gtk::ResponseType::Accept {
-                            if let Some(file) = diag.file() {
-                                match file.path() {
-                                    Some(path) => {
-                                        if let Err(err) = std::fs::write(path, vbios_data)
-                                            .context("Could not save vbios file")
-                                        {
-                                            show_error(&root, &err);
-                                        }
+                        if response == gtk::ResponseType::Accept
+                            && let Some(file) = diag.file()
+                        {
+                            match file.path() {
+                                Some(path) => {
+                                    if let Err(err) = std::fs::write(path, vbios_data)
+                                        .context("Could not save vbios file")
+                                    {
+                                        show_error(&root, &err);
                                     }
-                                    None => show_error(
-                                        &root,
-                                        &anyhow!("Selected file has an invalid path"),
-                                    ),
+                                }
+                                None => {
+                                    show_error(&root, &anyhow!("Selected file has an invalid path"))
                                 }
                             }
                         }
@@ -958,7 +1274,7 @@ impl AppModel {
         }
     }
 
-    async fn generate_debug_snapshot(&self, root: &gtk::ApplicationWindow) {
+    async fn generate_debug_snapshot(&self, root: &adw::ApplicationWindow) {
         match self.daemon_client.generate_debug_snapshot().await {
             Ok(path) => {
                 let path_label = gtk::Label::builder()
@@ -1088,7 +1404,7 @@ fn start_stats_update_loop(
     gpu_id: String,
     daemon_client: DaemonClient,
     sender: AsyncComponentSender<AppModel>,
-    header_sender: relm4::Sender<HeaderMsg>,
+    profiles_sender: relm4::Sender<ProfileSelectorMsg>,
 ) -> glib::JoinHandle<()> {
     debug!("spawning new stats update task");
     relm4::spawn_local(async move {
@@ -1107,7 +1423,7 @@ fn start_stats_update_loop(
 
             match daemon_client.list_profiles(false).await {
                 Ok(profiles) => {
-                    let _ = header_sender.send(HeaderMsg::Profiles(Box::new(profiles)));
+                    let _ = profiles_sender.send(ProfileSelectorMsg::Profiles(Box::new(profiles)));
                 }
                 Err(err) => {
                     error!("could not fetch profile info: {err:#}");
@@ -1145,18 +1461,4 @@ async fn create_connection() -> anyhow::Result<(DaemonClient, Option<anyhow::Err
             Ok((client, Some(err)))
         }
     }
-}
-
-fn format_friendly_size(bytes: u64) -> String {
-    const NAMES: &[&str] = &["bytes", "KiB", "MiB", "GiB"];
-
-    let mut size = bytes as f64;
-
-    let mut i = 0;
-    while size > 2048.0 && i < NAMES.len() - 1 {
-        size /= 1024.0;
-        i += 1;
-    }
-
-    format!("{size:.1$} {}", NAMES[i], (size.fract() != 0.0) as usize)
 }

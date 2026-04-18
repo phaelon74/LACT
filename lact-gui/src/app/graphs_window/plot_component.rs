@@ -1,23 +1,24 @@
 use super::{
+    GraphsWindowMsg,
     plot::Plot,
     stat::{StatType, StatsData},
-    GraphsWindowMsg,
 };
-use crate::app::graphs_window::DynamicIndexValue;
 use crate::I18N;
+use crate::app::graphs_window::DynamicIndexValue;
 use gtk::{
     gdk,
     glib::{subclass::types::ObjectSubclassIsExt, types::StaticType, value::ToValue},
     prelude::{
-        AdjustmentExt, BoxExt, ButtonExt, CheckButtonExt, OrientableExt, PopoverExt, WidgetExt,
+        AdjustmentExt, BoxExt, ButtonExt, CheckButtonExt, ObjectExt, OrientableExt, PopoverExt,
+        WidgetExt,
     },
 };
 use i18n_embed_fl::fl;
 use relm4::{
+    RelmObjectExt, RelmWidgetExt,
     binding::{BoolBinding, ConnectBinding, F64Binding},
     factory::positions::GridPosition,
     prelude::{DynamicIndex, FactoryVecDeque},
-    RelmObjectExt, RelmWidgetExt,
 };
 use std::sync::{Arc, RwLock};
 
@@ -81,7 +82,7 @@ impl relm4::factory::FactoryComponent for PlotComponent {
                         set_halign: gtk::Align::End,
                         set_valign: gtk::Align::Start,
                         set_margin_all: 20,
-                        set_icon_name: "info-symbolic",
+                        set_icon_name: "info-outline-symbolic",
                         set_tooltip: &fl!(I18N, "plot-show-detailed-info"),
                         set_opacity: 0.8,
                         bind: &self.print_extra_info,
@@ -108,17 +109,23 @@ impl relm4::factory::FactoryComponent for PlotComponent {
                         set_actions: gdk::DragAction::MOVE,
                         set_types: &[DynamicIndexValue::static_type()],
 
-                        connect_enter[root] => move |_, _, _| {
-                            root.set_opacity(0.5);
+                        connect_enter[root = root.downgrade()] => move |_, _, _| {
+                            if let Some(root) = root.upgrade() {
+                                root.set_opacity(0.5);
+                            }
                             gdk::DragAction::MOVE
                         },
 
-                        connect_leave[root] => move |_| {
-                            root.set_opacity(1.0);
+                        connect_leave[root = root.downgrade()] => move |_| {
+                            if let Some(root) = root.upgrade() {
+                                root.set_opacity(1.0);
+                            }
                         },
 
-                        connect_drop[root, index, sender] => move |_, value, _, _| {
-                            root.set_opacity(1.0);
+                        connect_drop[root = root.downgrade(), index, sender] => move |_, value, _, _| {
+                            if let Some(root) = root.upgrade() {
+                                root.set_opacity(1.0);
+                            }
 
                             if let Ok(DynamicIndexValue(source_index)) = value.get::<DynamicIndexValue>() {
                                 sender.output(GraphsWindowMsg::SwapPlots(index.clone(), source_index)).unwrap();

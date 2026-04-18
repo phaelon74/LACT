@@ -1,8 +1,8 @@
 use std::fmt;
 
 use crate::{
-    config::{GpuConfig, Profile, ProfileHooks},
     FanOptions, ProfileRule,
+    config::{GpuConfig, Profile, ProfileHooks},
 };
 use amdgpu_sysfs::gpu_handle::{PerformanceLevel, PowerLevelKind};
 use serde::{Deserialize, Serialize};
@@ -137,18 +137,23 @@ impl SetClocksCommand {
 #[serde(rename_all = "snake_case")]
 pub enum ClockspeedType {
     MaxCoreClock,
-    MaxMemoryClock,
-    MaxVoltage,
     MinCoreClock,
-    MinMemoryClock,
-    MinVoltage,
-    VoltageOffset,
     GpuClockOffset(u32),
+
+    MinVoltage,
+    MaxVoltage,
+    VoltageOffset,
+
+    MaxMemoryClock,
+    MinMemoryClock,
     MemClockOffset(u32),
+
     GpuVfCurveClock(u8),
-    MemVfCurveClock(u8),
     GpuVfCurveVoltage(u8),
+
+    MemVfCurveClock(u8),
     MemVfCurveVoltage(u8),
+
     Reset,
 }
 
@@ -176,8 +181,8 @@ impl fmt::Display for ProfileBase {
 #[cfg(test)]
 mod tests {
     use crate::{
-        request::{ClockspeedType, SetClocksCommand},
         Request,
+        request::{ClockspeedType, SetClocksCommand},
     };
 
     #[test]

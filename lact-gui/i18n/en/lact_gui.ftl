@@ -27,6 +27,8 @@ extensions = Extensions
 show-button = Show
 device-not-found = {$kind} device not found
 cache-info = Cache Information
+hw-ip-info = Hardware IP Information
+hw-queues = Queues
 amd-cache-desc = {$size} L{$level} {$types} cache { $shared ->
     [1] local to each CU
     *[other] shared between {$shared} CUs
@@ -108,7 +110,10 @@ power-cap = Power Usage Limit
 watt = W
 ghz = GHz
 mhz = MHz
+bytes = bytes
+kibibyte = KiB
 mebibyte = MiB
+gibibyte = GiB
 
 stats-section = Statistics
 gpu-clock = GPU Core Clock
@@ -151,7 +156,7 @@ nvidia-oc-description =
     It is possible to achieve a pseudo-undervolt by combining the locked clocks option with a positive clockspeed offset.
     This will force the GPU to run at a voltage that's constrained by the locked clocks, while achieving a higher clockspeed due to the offset.
     This can cause system instability if pushed too high.
-oc-warning = Warning: changing these values may lead to system instability and can potentially damage your hardware!
+oc-warning = Changing these values may lead to system instability and can potentially damage your hardware!
 show-all-pstates = Show all P-States
 enable-gpu-locked-clocks = Enable GPU Locked Clocks
 enable-vram-locked-clocks = Enable VRAM Locked Clocks
@@ -177,7 +182,7 @@ mem-pstate-clock-voltage = VRAM P-State {$pstate} Voltage (mV)
 pstates = Power States
 gpu-pstates = GPU Power States
 vram-pstates = VRAM Power States
-pstates-manual-needed = Note: performance level must be set to 'manual' to toggle power states
+pstates-manual-needed = Performance level must be set to 'manual' to toggle power states
 enable-pstate-config = Enable power state configuration
 
 show-historical-charts = Show Historical Charts
@@ -244,3 +249,10 @@ profile-rule-gamemode-tab = Gamemode is active
 profile-rule-process-name = Process Name:
 profile-rule-args-contain = Arguments Contain:
 profile-rule-specific-process = With a specific process:
+
+theme = Theme
+theme-auto = Automatic
+
+# Crash page
+crash-page-title = Application Crashed
+exit = Exit

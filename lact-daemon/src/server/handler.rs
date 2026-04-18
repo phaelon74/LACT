@@ -1,5 +1,5 @@
 use super::{
-    gpu_controller::{common::fan_control::FanCurveExt, DynGpuController, GpuController},
+    gpu_controller::{DynGpuController, GpuController, common::fan_control::FanCurveExt},
     profiles::ProfileWatcherCommand,
     system::{self},
 };
@@ -10,17 +10,17 @@ use crate::{
 };
 use crate::{server::gpu_controller::NvidiaLibs, system::run_command};
 use amdgpu_sysfs::gpu_handle::{
-    power_profile_mode::PowerProfileModesTable, PerformanceLevel, PowerLevelKind,
+    PerformanceLevel, PowerLevelKind, power_profile_mode::PowerProfileModesTable,
 };
-use anyhow::{anyhow, bail, Context};
+use anyhow::{Context, anyhow, bail};
 use lact_schema::{
+    ClocksInfo, DeviceInfo, DeviceListEntry, DeviceStats, FanControlMode, FanOptions, PmfwOptions,
+    PowerStates, ProcessList, ProfileRule, ProfileWatcherState, ProfilesInfo,
     config::{
-        default_fan_static_speed, FanControlSettings, FanCurve, GpuConfig, Profile, ProfileHooks,
+        FanControlSettings, FanCurve, GpuConfig, Profile, ProfileHooks, default_fan_static_speed,
     },
     default_fan_curve,
     request::{ClockspeedType, ConfirmCommand, ProfileBase, SetClocksCommand},
-    ClocksInfo, DeviceInfo, DeviceListEntry, DeviceStats, FanControlMode, FanOptions, PmfwOptions,
-    PowerStates, ProcessList, ProfileRule, ProfileWatcherState, ProfilesInfo,
 };
 use libdrm_amdgpu_sys::LibDrmAmdgpu;
 use libflate::gzip;
@@ -47,7 +47,7 @@ use std::{
 };
 use tokio::{
     process::Command,
-    sync::{mpsc, oneshot, RwLock, RwLockReadGuard},
+    sync::{RwLock, RwLockReadGuard, mpsc, oneshot},
     task::JoinHandle,
     time::sleep,
 };
@@ -116,29 +116,6 @@ impl<'a> Handler {
             controllers = load_controllers(base_path, pci_db)?;
 
             let mut should_retry = false;
-            #[cfg(not(test))]
-            if let Ok(devices) = fs::read_dir("/sys/bus/pci/devices") {
-                for device in devices.flatten() {
-                    if let Ok(uevent) = fs::read_to_string(device.path().join("uevent")) {
-                        let uevent = uevent.replace('\0', "");
-                        if uevent.contains("amdgpu") || uevent.contains("radeon") {
-                            let slot_name = device
-                                .file_name()
-                                .into_string()
-                                .expect("pci file name should be valid unicode");
-
-                            if controllers.values().any(|controller| {
-                                controller.controller_info().pci_slot_name == slot_name
-                            }) {
-                                debug!("found intialized drm entry for device {:?}", device.path());
-                            } else {
-                                warn!("could not find drm entry for device {:?}", device.path());
-                                should_retry = true;
-                            }
-                        }
-                    }
-                }
-            }
 
             if controllers.is_empty() {
                 warn!("no GPUs were found");
@@ -146,7 +123,9 @@ impl<'a> Handler {
             }
 
             if should_retry {
-                info!("retrying in {CONTROLLERS_LOAD_RETRY_INTERVAL}s (attempt {i}/{CONTROLLERS_LOAD_RETRY_ATTEMPTS})");
+                info!(
+                    "retrying in {CONTROLLERS_LOAD_RETRY_INTERVAL}s (attempt {i}/{CONTROLLERS_LOAD_RETRY_ATTEMPTS})"
+                );
                 sleep(Duration::from_secs(CONTROLLERS_LOAD_RETRY_INTERVAL)).await;
             } else {
                 break;
@@ -170,7 +149,9 @@ impl<'a> Handler {
                         error!("could not back up old config: {err:#}");
                     }
 
-                    info!("detected reset boot argument, resetting config (old config backed up to {backup_filename})");
+                    info!(
+                        "detected reset boot argument, resetting config (old config backed up to {backup_filename})"
+                    );
                     config = Config::default();
                     if let Err(err) = config.save(&Cell::new(Instant::now())) {
                         error!("could not save config: {err:#}");
@@ -357,6 +338,16 @@ impl<'a> Handler {
                 () = tokio::time::sleep(Duration::from_secs(apply_timer)) => {
                     info!("no confirmation received, reverting settings");
 
+                    let mut config_guard = handler.config.write().await;
+                    match config_guard.gpus_mut() {
+                        Ok(gpus) => {
+                            gpus.insert(id, previous_config.clone());
+                        }
+                        Err(err) => {
+                            error!("could not revert config: {err}") ;
+                        }
+                    }
+
                     if let Err(err) = controller.apply_config(&previous_config).await {
                         error!("could not revert settings: {err:#}");
                     }
@@ -424,7 +415,14 @@ impl<'a> Handler {
     }
 
     pub async fn get_device_info(&'a self, id: &str) -> anyhow::Result<DeviceInfo> {
-        Ok(self.controller_by_id(id).await?.get_info().await)
+        let controllers = self.gpu_controllers.read().await;
+        let controller = controllers
+            .get(id)
+            .ok_or_else(|| anyhow!("Controller '{id}' not found"))?;
+
+        let unique_vendor = controller_vendor_is_unique(controller, id, &controllers);
+
+        Ok(controller.get_info(unique_vendor).await)
     }
 
     pub async fn get_gpu_stats(&'a self, id: &str) -> anyhow::Result<DeviceStats> {
@@ -663,11 +661,11 @@ impl<'a> Handler {
                 .context("Could not read device dir")?
                 .flatten();
             for card_entry in card_files {
-                if let Ok(metadata) = card_entry.metadata() {
-                    if metadata.is_file() {
-                        let full_path = controller_path.join(card_entry.path());
-                        add_path_to_archive(&mut archive, &full_path)?;
-                    }
+                if let Ok(metadata) = card_entry.metadata()
+                    && metadata.is_file()
+                {
+                    let full_path = controller_path.join(card_entry.path());
+                    add_path_to_archive(&mut archive, &full_path)?;
                 }
             }
 
@@ -682,7 +680,8 @@ impl<'a> Handler {
             }
         }
 
-        let service_journal_output = run_command("journalctl", &["-u", "lactd", "-b"]).await;
+        let service_journal_output =
+            run_command("journalctl", &["--no-hostname", "-u", "lactd", "-b"]).await;
 
         match service_journal_output {
             Ok(output) => {
@@ -719,6 +718,19 @@ impl<'a> Handler {
 
         archive.append_data(&mut info_header, "info.json", Cursor::new(info_data))?;
 
+        if let Ok(clinfo_output) = Command::new("clinfo").arg("--json").output().await {
+            let mut clinfo_header = tar::Header::new_gnu();
+            clinfo_header.set_size(clinfo_output.stdout.len().try_into().unwrap());
+            clinfo_header.set_mode(0o755);
+            clinfo_header.set_cksum();
+
+            archive.append_data(
+                &mut clinfo_header,
+                "clinfo.json",
+                Cursor::new(clinfo_output.stdout),
+            )?;
+        }
+
         let mut writer = archive.into_inner().context("Could not finish archive")?;
         writer.flush().context("Could not flush output file")?;
 
@@ -744,9 +756,11 @@ impl<'a> Handler {
         for (id, controller) in controllers.iter() {
             let gpu_config = config.gpus().ok().and_then(|gpus| gpus.get(id));
 
+            let unique_vendor = controller_vendor_is_unique(controller, id, &controllers);
+
             let data = json!({
                 "pci_info": controller.controller_info().pci_info.clone(),
-                "info": controller.get_info().await,
+                "info": controller.get_info(unique_vendor).await,
                 "stats": controller.get_stats(gpu_config),
                 "clocks_info": controller.get_clocks_info(gpu_config).ok(),
                 "power_profile_modes": controller.get_power_profile_modes().ok(),
@@ -824,10 +838,10 @@ impl<'a> Handler {
                 activation_hook.clone_from(&new_profile.hooks.activated);
             }
 
-            if let Some(old_profile) = &config.current_profile {
-                if let Some(old_profile) = config.profiles.get(old_profile) {
-                    deactivation_hook.clone_from(&old_profile.hooks.deactivated);
-                }
+            if let Some(old_profile) = &config.current_profile
+                && let Some(old_profile) = config.profiles.get(old_profile)
+            {
+                deactivation_hook.clone_from(&old_profile.hooks.deactivated);
             }
         }
 
@@ -1094,7 +1108,7 @@ pub(crate) static NVML: LazyLock<Option<NvidiaLibs>> =
                         info!("NvAPI library loaded");
                     })
                     .inspect_err(|err| {
-                        error!("could not load NvAPI library: {err:#}");
+                        warn!("could not load NvAPI library: {err:#}");
                     })
                     .ok()
             };
@@ -1224,11 +1238,11 @@ fn add_path_recursively(
                 }
             }
         }
-    } else if let Ok(metadata) = fs::metadata(entry_path) {
-        if metadata.is_file() {
-            let full_path = prefix.join(entry_path);
-            add_path_to_archive(archive, &full_path)?;
-        }
+    } else if let Ok(metadata) = fs::metadata(entry_path)
+        && metadata.is_file()
+    {
+        let full_path = prefix.join(entry_path);
+        add_path_to_archive(archive, &full_path)?;
     }
 
     Ok(())
@@ -1290,4 +1304,26 @@ async fn run_hook_command(command: &str) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+fn controller_vendor_is_unique(
+    controller: &DynGpuController,
+    id: &str,
+    controllers: &BTreeMap<String, DynGpuController>,
+) -> bool {
+    let vendor_id = &controller
+        .controller_info()
+        .pci_info
+        .device_pci_info
+        .vendor_id;
+
+    !controllers.iter().any(|(other_id, controller)| {
+        other_id != id
+            && controller
+                .controller_info()
+                .pci_info
+                .device_pci_info
+                .vendor_id
+                == *vendor_id
+    })
 }

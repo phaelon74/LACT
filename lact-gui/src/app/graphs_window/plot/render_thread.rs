@@ -1,6 +1,7 @@
+use super::PlotColorScheme;
 use super::cubic_spline::cubic_spline_interpolation;
 use super::to_texture_ext::ToTextureExt;
-use super::PlotColorScheme;
+use crate::app::formatting;
 use crate::app::graphs_window::stat::{StatType, StatsData};
 use anyhow::Context;
 use cairo::{Context as CairoContext, ImageSurface};
@@ -32,6 +33,7 @@ pub struct RenderRequest {
 
     pub width: u32,
     pub height: u32,
+    pub scale_factor: i32,
 
     pub time_period_seconds: i64,
 }
@@ -143,10 +145,15 @@ pub(super) fn process_request(
     // Create a new ImageSurface for Cairo rendering.
     let mut surface = ImageSurface::create(
         cairo::Format::ARgb32,
-        (render_request.width) as i32,
-        render_request.height as i32,
+        (render_request.width) as i32 * render_request.scale_factor,
+        render_request.height as i32 * render_request.scale_factor,
     )
     .unwrap();
+
+    surface.set_device_scale(
+        render_request.scale_factor as f64,
+        render_request.scale_factor as f64,
+    );
 
     let cairo_context = CairoContext::new(&surface).unwrap();
 
@@ -261,10 +268,7 @@ impl RenderRequest {
             .configure_mesh()
             .axis_style(self.colors.border_secondary)
             .bold_line_style(self.colors.border)
-            .x_label_formatter(&|date_time| {
-                let date_time = chrono::DateTime::from_timestamp_millis(*date_time).unwrap();
-                date_time.format("%H:%M:%S").to_string()
-            })
+            .x_label_formatter(&formatting::fmt_timestamp_to_dt)
             .y_label_formatter(&|x| format!("{x}{value_suffix}"))
             .x_labels(5)
             .y_labels(10)
@@ -294,12 +298,21 @@ impl RenderRequest {
                 write!(stat_label, ", Avg {avg_value:.1}{stat_suffix}").unwrap();
             }
 
+            // Evaluate fixed number of points per spline segment
+            const POINTS_PER_SEGMENT: usize = 4;
+
             chart
                 .draw_series(LineSeries::new(
                     cubic_spline_interpolation(data).flat_map(
-                        |((first_time, second_time), segment)| {
-                            // Interpolate in intervals of one millisecond.
-                            (first_time..second_time).map(move |current_date| {
+                        move |((first_time, second_time), segment)| {
+                            let segment_duration = (second_time - first_time) as f64;
+                            let step = segment_duration / (POINTS_PER_SEGMENT as f64 - 1.0);
+
+                            // Evaluate spline at POINTS_PER_SEGMENT evenly spaced points per segment.
+                            (0..POINTS_PER_SEGMENT).map(move |i| {
+                                let offset = (i as f64 * step).round() as i64;
+                                let current_date = first_time + offset;
+                                let current_date = current_date.min(second_time - 1);
                                 (current_date, segment.evaluate(current_date))
                             })
                         },

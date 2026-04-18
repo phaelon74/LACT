@@ -1,14 +1,17 @@
+use crate::app::styles::AppTheme;
+
 use super::{
     confirmation_dialog::ConfirmationOptions,
-    header::profile_rule_window::{profile_row::ProfileRuleRowMsg, ProfileRuleWindowMsg},
+    profiles::profile_rule_window::{ProfileRuleWindowMsg, profile_rule_row::ProfileRuleRowMsg},
 };
 use lact_client::ConnectionStatusMsg;
-use lact_schema::{config::ProfileHooks, request::ProfileBase, DeviceStats, ProfileRule};
+use lact_schema::{DeviceStats, ProfileRule, config::ProfileHooks, request::ProfileBase};
 use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub enum AppMsg {
     Error(Arc<anyhow::Error>),
+    GpuSelected(u32),
     ReloadData {
         full: bool,
     },
@@ -44,10 +47,12 @@ pub enum AppMsg {
         rule: Option<ProfileRule>,
         hooks: ProfileHooks,
     },
+    ThemeSelected(AppTheme),
     ImportProfile,
     ExportProfile(Option<String>),
     ConnectionStatus(ConnectionStatusMsg),
     AskConfirmation(ConfirmationOptions, Box<AppMsg>),
+    Crash(String),
 }
 
 impl AppMsg {

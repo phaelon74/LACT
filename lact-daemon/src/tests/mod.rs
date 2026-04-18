@@ -2,7 +2,7 @@ mod mock_fs;
 
 use crate::{
     config::Config,
-    server::handler::{read_pci_db, Handler},
+    server::handler::{Handler, read_pci_db},
 };
 use insta::{assert_debug_snapshot, assert_json_snapshot};
 use lact_schema::config::GpuConfig;
@@ -14,7 +14,9 @@ use tokio::task::LocalSet;
 fn init_tracing() {
     static TRACING_LOCK: OnceLock<()> = OnceLock::new();
     TRACING_LOCK.get_or_init(|| {
-        tracing_subscriber::fmt().init();
+        tracing_subscriber::fmt()
+            .with_env_filter("easy_fuser=warn,info")
+            .init();
     });
 }
 
@@ -64,6 +66,10 @@ async fn apply_settings() {
         let pci_db = read_pci_db();
 
         for vendor_dir in fs::read_dir(test_data_dir).unwrap().flatten() {
+            if !vendor_dir.metadata().unwrap().is_dir() {
+                continue;
+            }
+
             for device_dir in fs::read_dir(vendor_dir.path()).unwrap().flatten() {
                 for entry in fs::read_dir(device_dir.path()).unwrap().flatten() {
                     let name = entry.file_name();

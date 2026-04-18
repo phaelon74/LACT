@@ -17,11 +17,11 @@ pub const VENDOR_NVIDIA: &str = "10DE";
 
 use crate::server::handler::{AMD_DRM, INTEL_DRM, NVML};
 use amdgpu_sysfs::gpu_handle::power_profile_mode::PowerProfileModesTable;
-use anyhow::anyhow;
 use anyhow::Context;
-use futures::{future::LocalBoxFuture, FutureExt};
+use anyhow::anyhow;
+use futures::{FutureExt, future::LocalBoxFuture};
 use lact_schema::{
-    config::GpuConfig, ClocksInfo, DeviceInfo, DeviceStats, GpuPciInfo, PciInfo, PowerStates,
+    ClocksInfo, DeviceInfo, DeviceStats, GpuPciInfo, PciInfo, PowerStates, config::GpuConfig,
 };
 use std::io;
 #[cfg(feature = "nvidia")]
@@ -43,7 +43,7 @@ pub trait GpuController {
 
     fn device_type(&self) -> DeviceType;
 
-    fn get_info(&self) -> LocalBoxFuture<'_, DeviceInfo>;
+    fn get_info(&self, unique_vendor: bool) -> LocalBoxFuture<'_, DeviceInfo>;
 
     fn friendly_name(&self) -> Option<String>;
 
@@ -124,6 +124,7 @@ impl CommonControllerInfo {
     }
 }
 
+#[derive(Debug, PartialEq)]
 pub struct PciSlotInfo {
     pub domain: u16,
     pub bus: u16,
@@ -238,6 +239,7 @@ pub(crate) fn init_controller(
                     Err(err) => error!("could not initialize Nvidia controller: {err:#}"),
                 }
             } else {
+                #[cfg(not(test))]
                 error!("NVML is missing, Nvidia controls will not be available");
             }
         }

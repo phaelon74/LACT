@@ -5,34 +5,38 @@ use super::{CommonControllerInfo, FanControlHandle, GpuController};
 use crate::{
     bindings::nvidia::NvPhysicalGpuHandle,
     server::{
-        gpu_controller::{common::fan_control::FanCurveExt, common::resolve_process_name, NvApi},
+        gpu_controller::{NvApi, common::fan_control::FanCurveExt, common::resolve_process_name},
         opencl::get_opencl_info,
         vulkan::get_vulkan_info,
     },
 };
-use amdgpu_sysfs::{gpu_handle::power_profile_mode::PowerProfileModesTable, hw_mon::Temperature};
-use anyhow::{anyhow, bail, Context};
+use amdgpu_sysfs::{
+    gpu_handle::{fan_control::FanInfo, power_profile_mode::PowerProfileModesTable},
+    hw_mon::Temperature,
+};
+use anyhow::{Context, anyhow, bail};
 use driver::DriverHandle;
-use futures::{future::LocalBoxFuture, FutureExt};
+use futures::{FutureExt, future::LocalBoxFuture, join};
 use indexmap::IndexMap;
 use lact_schema::{
-    config::{FanControlSettings, FanCurve, GpuConfig},
     CacheInfo, ClocksInfo, ClocksTable, ClockspeedStats, DeviceFlag, DeviceInfo, DeviceStats,
     DeviceType, DrmInfo, DrmMemoryInfo, FanControlMode, FanStats, IntelDrmInfo, LinkInfo,
     NvidiaClockOffset, NvidiaClocksTable, PmfwInfo, PowerState, PowerStates, PowerStats,
-    ProcessInfo, ProcessList, ProcessType, ProcessUtilizationType, VoltageStats, VramStats,
+    ProcessInfo, ProcessList, ProcessType, ProcessUtilizationType, TemperatureEntry, VoltageStats,
+    VramStats,
+    config::{FanControlSettings, FanCurve, GpuConfig},
 };
 use nvml_wrapper::{
+    Device, Nvml,
     bitmasks::device::ThrottleReasons,
     enum_wrappers::device::{Clock, PerformanceState, TemperatureSensor, TemperatureThreshold},
     enums::device::{GpuLockedClocksSetting, UsedGpuMemory},
     error::NvmlError,
-    Device, Nvml,
 };
 use std::{
     cell::{Cell, RefCell},
     cmp,
-    collections::{btree_map::Entry, BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, btree_map::Entry},
     fmt::Write,
     rc::Rc,
     time::{Duration, Instant},
@@ -52,6 +56,7 @@ pub struct NvidiaGpuController {
     nvapi: Option<&'static NvApi>,
     common: CommonControllerInfo,
     fan_control_handle: RefCell<Option<FanControlHandle>>,
+    initial_target_temp: Option<u32>,
 
     driver_handle: Option<DriverHandle>,
     nvapi_handle: Option<NvPhysicalGpuHandle>,
@@ -119,6 +124,10 @@ impl NvidiaGpuController {
             }
         };
 
+        let target_temp = device
+            .temperature_threshold(TemperatureThreshold::AcousticCurr)
+            .ok();
+
         Ok(Self {
             nvml,
             nvapi,
@@ -126,6 +135,7 @@ impl NvidiaGpuController {
             driver_handle,
             nvapi_handle,
             nvapi_thermals_mask,
+            initial_target_temp: target_temp,
             last_util_timestamp: Cell::new(None),
             fan_control_handle: RefCell::new(None),
             last_applied_offsets: RefCell::new(HashMap::new()),
@@ -138,6 +148,24 @@ impl NvidiaGpuController {
         self.nvml
             .device_by_pci_bus_id(self.common.pci_slot_name.as_str())
             .expect("Can no longer get device")
+    }
+
+    fn get_target_temp(&self) -> Option<FanInfo> {
+        let device = self.device();
+        let current = device
+            .temperature_threshold(TemperatureThreshold::AcousticCurr)
+            .ok()?;
+        let min = device
+            .temperature_threshold(TemperatureThreshold::AcousticMin)
+            .ok()?;
+        let max = device
+            .temperature_threshold(TemperatureThreshold::AcousticMax)
+            .ok()?;
+
+        Some(FanInfo {
+            current,
+            allowed_range: Some((min, max)),
+        })
     }
 
     async fn start_curve_fan_control_task(
@@ -199,7 +227,9 @@ impl NvidiaGpuController {
                     .expect("Could not read temperature") as i32;
 
                 if (last_temp - current_temp).abs() < change_threshold {
-                    trace!("temperature changed from {last_temp}°C to {current_temp}°C, which is less than the {change_threshold}°C threshold, skipping speed adjustment");
+                    trace!(
+                        "temperature changed from {last_temp}°C to {current_temp}°C, which is less than the {change_threshold}°C threshold, skipping speed adjustment"
+                    );
                     continue;
                 }
 
@@ -235,7 +265,7 @@ impl NvidiaGpuController {
                     if target_pwm < previous_pwm && diff < spindown_delay {
                         trace!(
                             "delaying fan spindown ({}ms left)",
-                            (spindown_delay - diff).as_millis()
+                            spindown_delay.checked_sub(diff).unwrap().as_millis()
                         );
                         continue;
                     }
@@ -365,12 +395,17 @@ impl GpuController for NvidiaGpuController {
             .or_else(|| self.common.pci_info.device_pci_info.model.clone())
     }
 
-    fn get_info(&self) -> LocalBoxFuture<'_, DeviceInfo> {
+    fn get_info(&self, unique_vendor: bool) -> LocalBoxFuture<'_, DeviceInfo> {
         Box::pin(async move {
-            let vulkan_instances = get_vulkan_info(&self.common).await.unwrap_or_else(|err| {
+            let (vulkan_result, opencl_instances) = join!(
+                get_vulkan_info(&self.common),
+                get_opencl_info(&self.common, unique_vendor)
+            );
+            let vulkan_instances = vulkan_result.unwrap_or_else(|err| {
                 warn!("could not load vulkan info: {err:#}");
                 vec![]
             });
+
             let device = self.device();
             let driver_handle = self.driver_handle.as_ref();
 
@@ -391,8 +426,8 @@ impl GpuController for NvidiaGpuController {
                         .pcie_link_speed()
                         .map(|v| {
                             let mut output = format!("{} GT/s", v / 1000);
-                            if let Ok(gen) = device.current_pcie_link_gen() {
-                                let _ = write!(output, " Gen {gen}");
+                            if let Ok(link_gen) = device.current_pcie_link_gen() {
+                                let _ = write!(output, " Gen {link_gen}");
                             }
                             output
                         })
@@ -404,13 +439,13 @@ impl GpuController for NvidiaGpuController {
                         .and_then(|v| v.as_integer())
                         .map(|v| {
                             let mut output = format!("{} GT/s", v / 1000);
-                            if let Ok(gen) = device.max_pcie_link_gen() {
-                                let _ = write!(output, " Gen {gen}");
+                            if let Ok(link_gen) = device.max_pcie_link_gen() {
+                                let _ = write!(output, " Gen {link_gen}");
                             }
                             output
                         }),
                 },
-                opencl_info: get_opencl_info(&self.common),
+                opencl_instances,
                 drm_info: Some(DrmInfo {
                     device_name: device.name().ok(),
                     pci_revision_id: None,
@@ -449,6 +484,7 @@ impl GpuController for NvidiaGpuController {
                                 .map(|memory_info| bar_info.total >= memory_info.total),
                         })
                         .ok(),
+                    amd_ip_info: vec![],
                     intel: IntelDrmInfo::default(),
                 }),
                 flags: vec![
@@ -476,12 +512,17 @@ impl GpuController for NvidiaGpuController {
                 .map(|value| value as f32)
                 .ok();
 
+            let value = Temperature {
+                current: Some(temp as f32),
+                crit,
+                crit_hyst: None,
+            };
+
             temps.insert(
                 "GPU".to_owned(),
-                Temperature {
-                    current: Some(temp as f32),
-                    crit,
-                    crit_hyst: None,
+                TemperatureEntry {
+                    value,
+                    display_only: false,
                 },
             );
         }
@@ -490,29 +531,35 @@ impl GpuController for NvidiaGpuController {
 
         if let (Some(nvapi), Some(handle)) = (self.nvapi.as_ref(), self.nvapi_handle.as_ref()) {
             unsafe {
-                if let Some(mask) = self.nvapi_thermals_mask {
-                    if let Ok(thermals) = nvapi.get_thermals(*handle, mask) {
-                        if let Some(hotspot) = thermals.hotspot() {
-                            temps.insert(
-                                "GPU Hotspot".to_owned(),
-                                Temperature {
+                if let Some(mask) = self.nvapi_thermals_mask
+                    && let Ok(thermals) = nvapi.get_thermals(*handle, mask)
+                {
+                    if let Some(hotspot) = thermals.hotspot() {
+                        temps.insert(
+                            "GPU Hotspot".to_owned(),
+                            TemperatureEntry {
+                                value: Temperature {
                                     current: Some(hotspot as f32),
                                     crit: None,
                                     crit_hyst: None,
                                 },
-                            );
-                        }
+                                display_only: true,
+                            },
+                        );
+                    }
 
-                        if let Some(vram) = thermals.vram() {
-                            temps.insert(
-                                "VRAM".to_owned(),
-                                Temperature {
+                    if let Some(vram) = thermals.vram() {
+                        temps.insert(
+                            "VRAM".to_owned(),
+                            TemperatureEntry {
+                                value: Temperature {
                                     current: Some(vram as f32),
                                     crit: None,
                                     crit_hyst: None,
                                 },
-                            );
-                        }
+                                display_only: true,
+                            },
+                        );
                     }
                 }
 
@@ -586,7 +633,10 @@ impl GpuController for NvidiaGpuController {
                 pwm_max: fan_range.map(|(_, max)| (f64::from(max) * 2.55).round() as u32),
                 pwm_min: fan_range.map(|(min, _)| (f64::from(min) * 2.55).round() as u32),
                 temperature_range: None,
-                pmfw_info: PmfwInfo::default(),
+                pmfw_info: PmfwInfo {
+                    target_temp: self.get_target_temp(),
+                    ..Default::default()
+                },
             },
             power: PowerStats {
                 average: None,
@@ -607,6 +657,7 @@ impl GpuController for NvidiaGpuController {
                     .power_management_limit_default()
                     .map(|mw| f64::from(mw) / 1000.0)
                     .ok(),
+                sensors: HashMap::new(),
             },
             busy_percent: device
                 .utilization_rates()
@@ -616,7 +667,14 @@ impl GpuController for NvidiaGpuController {
             clockspeed: ClockspeedStats {
                 gpu_clockspeed: device.clock_info(Clock::Graphics).map(Into::into).ok(),
                 vram_clockspeed: device.clock_info(Clock::Memory).map(Into::into).ok(),
-                current_gfxclk: None,
+                target_gpu_clockspeed: None,
+                sensors: [
+                    ("SM", device.clock_info(Clock::SM)),
+                    ("Video", device.clock_info(Clock::Video)),
+                ]
+                .into_iter()
+                .filter_map(|(label, result)| Some((label.to_owned(), result.ok()?.into())))
+                .collect(),
             },
             throttle_info: device.current_throttle_reasons().ok().map(|reasons| {
                 reasons
@@ -631,7 +689,7 @@ impl GpuController for NvidiaGpuController {
             }),
             voltage: VoltageStats {
                 gpu: voltage,
-                northbridge: None,
+                ..Default::default()
             },
             performance_level: None,
             core_power_state: active_pstate,
@@ -667,14 +725,12 @@ impl GpuController for NvidiaGpuController {
 
                     // On some driver versions, the applied offset values are not reported.
                     // In these scenarios we must store them manually for reporting.
-                    if offset.current == 0 {
-                        if let Some(applied_offsets) =
+                    if offset.current == 0
+                        && let Some(applied_offsets) =
                             self.last_applied_offsets.borrow().get(clock_type)
-                        {
-                            if let Some(applied_offset) = applied_offsets.get(pstate) {
-                                offset.current = *applied_offset;
-                            }
-                        }
+                        && let Some(applied_offset) = applied_offsets.get(pstate)
+                    {
+                        offset.current = *applied_offset;
                     }
 
                     offsets.insert(pstate.as_c(), offset);
@@ -723,7 +779,22 @@ impl GpuController for NvidiaGpuController {
         Err(anyhow!("Not supported on Nvidia"))
     }
 
-    fn reset_pmfw_settings(&self) {}
+    fn reset_pmfw_settings(&self) {
+        if let Some(initial) = self.initial_target_temp {
+            let device = self.device();
+            if let Ok(current) = device.temperature_threshold(TemperatureThreshold::AcousticCurr)
+                && current != initial
+            {
+                debug!("resetting target temperature to {initial}");
+                if let Err(err) = device.set_temperature_threshold(
+                    TemperatureThreshold::AcousticCurr,
+                    initial.cast_signed(),
+                ) {
+                    warn!("Could not reset target temperature: {err:#}");
+                }
+            }
+        }
+    }
 
     fn vbios_dump(&self) -> anyhow::Result<Vec<u8>> {
         Err(anyhow!("Not supported on Nvidia"))
@@ -752,13 +823,13 @@ impl GpuController for NvidiaGpuController {
                 let current_cap = device.power_management_limit();
                 let default_cap = device.power_management_limit_default();
 
-                if let (Ok(current_cap), Ok(default_cap)) = (current_cap, default_cap) {
-                    if current_cap != default_cap {
-                        debug!("resetting power cap to {default_cap}");
-                        device
-                            .set_power_management_limit(default_cap)
-                            .context("Could not reset power cap")?;
-                    }
+                if let (Ok(current_cap), Ok(default_cap)) = (current_cap, default_cap)
+                    && current_cap != default_cap
+                {
+                    debug!("resetting power cap to {default_cap}");
+                    device
+                        .set_power_management_limit(default_cap)
+                        .context("Could not reset power cap")?;
                 }
             }
 
@@ -859,7 +930,10 @@ impl GpuController for NvidiaGpuController {
                         for point in settings.curve.0.values() {
                             #[allow(clippy::cast_possible_truncation)]
                             if !(min_speed..=max_speed).contains(&((*point * 100.0) as u32)) {
-                                bail!("Fan speed {}% outside of the allowed range {min_speed}% to {max_speed}%", point*100.0);
+                                bail!(
+                                    "Fan speed {}% outside of the allowed range {min_speed}% to {max_speed}%",
+                                    point * 100.0
+                                );
                             }
                         }
 
@@ -873,6 +947,23 @@ impl GpuController for NvidiaGpuController {
                     .context("Could not reset fan control")?;
             }
 
+            if let Some(target_temp) = config.pmfw_options.target_temperature
+                && let Some(info) = self.get_target_temp()
+                && let Some((min, max)) = info.allowed_range
+            {
+                let target_temp = target_temp.clamp(min, max);
+
+                if info.current != target_temp {
+                    debug!("setting target temperature to {target_temp}");
+                    if let Err(err) = device.set_temperature_threshold(
+                        TemperatureThreshold::AcousticCurr,
+                        target_temp.cast_signed(),
+                    ) {
+                        warn!("Could not set target temperature: {err:#}");
+                    }
+                }
+            }
+
             Ok(())
         })
     }
@@ -883,21 +974,18 @@ impl GpuController for NvidiaGpuController {
         if let Ok(supported_pstates) = device.supported_performance_states() {
             for pstate in supported_pstates {
                 for clock_type in [Clock::Graphics, Clock::Memory] {
-                    if let Ok(current_offset) = device.clock_offset(clock_type, pstate) {
-                        if current_offset.clock_offset_mhz != 0
+                    if let Ok(current_offset) = device.clock_offset(clock_type, pstate)
+                        && (current_offset.clock_offset_mhz != 0
                             || self
                                 .last_applied_offsets
                                 .borrow()
                                 .get(&clock_type)
                                 .and_then(|applied_offsets| applied_offsets.get(&pstate))
-                                .is_some_and(|offset| *offset != 0)
-                        {
-                            debug!("resetting clock offset for {clock_type:?} pstate {pstate:?}");
-                            device
-                                .set_clock_offset(clock_type, pstate, 0)
-                                .with_context(|| {
-                                    format!("Could not reset {clock_type:?} pstate {pstate:?}")
-                                })?;
+                                .is_some_and(|offset| *offset != 0))
+                    {
+                        debug!("resetting clock offset for {clock_type:?} pstate {pstate:?}");
+                        if let Err(err) = device.set_clock_offset(clock_type, pstate, 0) {
+                            warn!("could not reset {clock_type:?} pstate {pstate:?}: {err:#}");
                         }
                     }
 

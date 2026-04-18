@@ -1,11 +1,10 @@
 [package]
 name = "lact"
-version = "0.8.2"
-edition = "2021"
+version = "0.8.5"
+edition = "2024"
 
 [features]
 default = ["lact-gui", "nvidia"]
-adw = ["lact-gui/adw"]
 nvidia = ["lact-daemon/nvidia"]
 
 [dependencies]
