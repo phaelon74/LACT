@@ -1,0 +1,197 @@
+# =============================================================================
+# LACT — GeForce RTX 3060 (desktop) — efficiency-oriented “pseudo undervolt”
+# =============================================================================
+#
+# NVIDIA fan curves: LACT checks each point against the driver’s allowed range
+# (see lact-daemon nvidia.rs min_max_fan_speed). Many cards require >= 30%
+# (0.30); values like 0.28 or 0.25 will fail with:
+#   Fan speed 28% outside of the allowed range 30% to 100%
+#
+# GPU IDs: from `lact cli list-gpus`. This file lists seven slots (c3mose01);
+# delete or edit entries you do not use.
+#
+# Hardware / tuning notes: see earlier revision comments in git history, or
+# docs/CONFIG.md + README (power_cap, min/max core clocks, offsets).
+#
+# =============================================================================
+
+version: 5
+
+daemon:
+  log_level: info
+  admin_group: sudo
+  disable_clocks_cleanup: false
+
+apply_settings_timer: 5
+
+gpus:
+  '10DE:2503-19DA:4630-0000:31:00.0':
+    fan_control_enabled: true
+    fan_control_settings:
+      mode: curve
+      static_speed: 0.5
+      temperature_key: edge
+      interval_ms: 500
+      curve:
+        40: 0.30
+        50: 0.40
+        60: 0.50
+        70: 0.70
+        80: 0.90
+      spindown_delay_ms: 3000
+      change_threshold: 2
+      auto_threshold: 40
+    power_cap: 100.0
+    min_core_clock: 210
+    max_core_clock: 1680
+    gpu_clock_offsets:
+      0: 100
+    mem_clock_offsets:
+      0: 400
+
+  '10DE:2503-19DA:2630-0000:32:00.0':
+    fan_control_enabled: true
+    fan_control_settings:
+      mode: curve
+      static_speed: 0.5
+      temperature_key: edge
+      interval_ms: 500
+      curve:
+        40: 0.30
+        50: 0.40
+        60: 0.52
+        70: 0.68
+        80: 0.88
+      spindown_delay_ms: 3000
+      change_threshold: 2
+      auto_threshold: 40
+    power_cap: 100.0
+    min_core_clock: 210
+    max_core_clock: 1680
+    gpu_clock_offsets:
+      0: 100
+    mem_clock_offsets:
+      0: 400
+
+  '10DE:2503-19DA:2630-0000:33:00.0':
+    fan_control_enabled: true
+    fan_control_settings:
+      mode: curve
+      static_speed: 0.5
+      temperature_key: edge
+      interval_ms: 500
+      curve:
+        40: 0.30
+        50: 0.40
+        60: 0.52
+        70: 0.68
+        80: 0.88
+      spindown_delay_ms: 3000
+      change_threshold: 2
+      auto_threshold: 40
+    power_cap: 100.0
+    min_core_clock: 210
+    max_core_clock: 1680
+    gpu_clock_offsets:
+      0: 100
+    mem_clock_offsets:
+      0: 400
+
+  '10DE:2504-19DA:4630-0000:34:00.0':
+    fan_control_enabled: true
+    fan_control_settings:
+      mode: curve
+      static_speed: 0.5
+      temperature_key: edge
+      interval_ms: 500
+      curve:
+        40: 0.30
+        50: 0.40
+        60: 0.52
+        70: 0.68
+        80: 0.88
+      spindown_delay_ms: 3000
+      change_threshold: 2
+      auto_threshold: 40
+    power_cap: 100.0
+    min_core_clock: 210
+    max_core_clock: 1680
+    gpu_clock_offsets:
+      0: 100
+    mem_clock_offsets:
+      0: 400
+
+  '10DE:2503-3842:3657-0000:3a:00.0':
+    fan_control_enabled: true
+    fan_control_settings:
+      mode: curve
+      static_speed: 0.5
+      temperature_key: edge
+      interval_ms: 500
+      curve:
+        40: 0.30
+        50: 0.40
+        60: 0.52
+        70: 0.68
+        80: 0.88
+      spindown_delay_ms: 3000
+      change_threshold: 2
+      auto_threshold: 40
+    power_cap: 100.0
+    min_core_clock: 210
+    max_core_clock: 1680
+    gpu_clock_offsets:
+      0: 100
+    mem_clock_offsets:
+      0: 400
+
+  '10DE:2503-3842:3657-0000:38:00.0':
+    fan_control_enabled: true
+    fan_control_settings:
+      mode: curve
+      static_speed: 0.5
+      temperature_key: edge
+      interval_ms: 500
+      curve:
+        40: 0.30
+        50: 0.40
+        60: 0.52
+        70: 0.68
+        80: 0.88
+      spindown_delay_ms: 3000
+      change_threshold: 2
+      auto_threshold: 40
+    power_cap: 100.0
+    min_core_clock: 210
+    max_core_clock: 1680
+    gpu_clock_offsets:
+      0: 100
+    mem_clock_offsets:
+      0: 400
+
+  '10DE:2503-19DA:2630-0000:39:00.0':
+    fan_control_enabled: true
+    fan_control_settings:
+      mode: curve
+      static_speed: 0.5
+      temperature_key: edge
+      interval_ms: 500
+      curve:
+        40: 0.30
+        50: 0.40
+        60: 0.52
+        70: 0.68
+        80: 0.88
+      spindown_delay_ms: 3000
+      change_threshold: 2
+      auto_threshold: 40
+    power_cap: 100.0
+    min_core_clock: 210
+    max_core_clock: 1680
+    gpu_clock_offsets:
+      0: 100
+    mem_clock_offsets:
+      0: 400
+
+current_profile: null
+auto_switch_profiles: false
